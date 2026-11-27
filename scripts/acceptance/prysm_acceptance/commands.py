@@ -13,7 +13,8 @@ supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
 The application manager reports the foreground app, launches or closes Prysm's app
-and opens the home screen. The optional standby check uses tvpower/power/powerOff.
+and opens the home screen. Standby uses tvpower/power/powerOff with wake-on-LAN configured.
+Reboot checks use /sbin/reboot.
 When the TV does not answer and `[tv] mac` is set, the runner sends it one
 wake-on-LAN packet (`local.wake-on-lan`, a UDP broadcast, no process). Automatic standby uses the same
 packet to wake the TV.
@@ -319,6 +320,10 @@ def tv_remove_app(host: str) -> Command:
     """Remove the app through the TV's install service (what the webOS CLI's `ares-install --remove` calls),
     after the supervisor's uninstall: the package has no removal script."""
     return _install_service('tv.remove-app', host, 'remove', {}, r'"removed"')
+
+
+def tv_reboot(host: str) -> Command:
+    return _ssh('tv.reboot', host, '/sbin/reboot', 15)
 
 
 def tv_standby(host: str) -> Command:
@@ -1010,6 +1015,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.setup': lambda: tv_setup('root@tv.example'),
     'tv.supervisor-uninstall': lambda: tv_supervisor_uninstall('root@tv.example'),
     'tv.remove-app': lambda: tv_remove_app('root@tv.example'),
+    'tv.reboot': lambda: tv_reboot('root@tv.example'),
     'tv.standby': lambda: tv_standby('root@tv.example'),
     'tv.get-state': lambda: tv_get_state('root@tv.example'),
     'tv.uninstall': lambda: tv_uninstall('root@tv.example'),

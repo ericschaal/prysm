@@ -156,6 +156,13 @@ class Prysm:
             timeout=self.timeout,
         )
 
+    def frames_received(self) -> int:
+        metrics = web.request('GET', self._url('/metrics'), timeout=self.timeout).body.decode()
+        count = re.search(r'^prysm_frames_received_total (\d+)$', metrics, re.MULTILINE)
+        if count is None:
+            raise ValueError('receiver did not report prysm_frames_received_total')
+        return int(count[1])
+
     def version(self) -> str | None:
         """The running version, `prysm_build_info{version}` in `GET /metrics` (served with `--metrics`)."""
         text = web.request('GET', self._url('/metrics'), timeout=self.timeout).body.decode(errors='replace')

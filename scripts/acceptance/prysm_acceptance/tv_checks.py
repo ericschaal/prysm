@@ -688,7 +688,9 @@ def idle_lights(wled: Wled, *, on: bool) -> Si:
     return observed
 
 
-def check_startup_off(prysm: Prysm, wled: Wled, evidence: dict[str, object]) -> None:
+def check_startup_off(
+    prysm: Prysm, wled: Wled, evidence: dict[str, object], *, remembered: str = 'screen_sync'
+) -> None:
     """Wait for confirmed physical Off, then check the remembered mode, stopped session and actual lights."""
     state = prysm.wait(lambda s: s['control'].get('power') == 'off', 30)
     if state is None:
@@ -702,7 +704,7 @@ def check_startup_off(prysm: Prysm, wled: Wled, evidence: dict[str, object]) -> 
         if (
             state['target'] != Target.OFF
             or state['control'].get('power') != 'off'
-            or state['control']['remembered'] != 'screen_sync'
+            or state['control']['remembered'] != remembered
             or state['control']['busy']
             or state['control']['external']
             or prysm_api.session(state) != SessionState.STOPPED
@@ -710,7 +712,7 @@ def check_startup_off(prysm: Prysm, wled: Wled, evidence: dict[str, object]) -> 
             or lights['state']['on']
             or lights['info']['live']
         ):
-            raise Failed('expected Off with Screen sync remembered and no live output', evidence)
+            raise Failed(f'expected Off with {remembered} remembered and no live output', evidence)
         if time.monotonic() >= deadline:
             return
         time.sleep(1)
@@ -724,7 +726,7 @@ def standby_plan(found: Tv, cell: TvCell, config: Config, sleep: str, wake: str)
         *shown(found.state_command()),
         f'wait up to {STANDBY_SECONDS} s for standby'
         + (' and a stopped worker' if cell.flavour == Flavour.FULL else '')
-        + ('' if config.tv.auto_standby else ' (or no reply after remote confirmation)'),
+        + ('' if config.tv.mac else ' (or no reply after remote confirmation)'),
         *([idle_lights_plan(config, on=False)] if cell.flavour == Flavour.FULL else []),
         wake,
         'wait up to 90 s for active power and a running worker',
@@ -768,7 +770,7 @@ def test_standby(
     reached = in_state(screen, Shown.UI, prysm, _ui_section(cell))
     with standby:
         tell_person(f'waiting for standby (up to {STANDBY_SECONDS} s)')
-        asleep = wait_standby(screen.tv.get_state, cell.flavour, remote_confirmed=not config.tv.auto_standby)
+        asleep = wait_standby(screen.tv.get_state, cell.flavour, remote_confirmed=not config.tv.mac)
         evidence: dict[str, object] = {'state': reached, 'standby_state': asleep}
         if cell.flavour == Flavour.FULL:
             evidence['wled_before_wake'] = idle_lights(wled, on=False)

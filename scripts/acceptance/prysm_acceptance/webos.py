@@ -116,6 +116,37 @@ class WebosTv:
         return f'the TV ({self.target}) does not answer over SSH {WAKE_SECONDS} s after a wake-on-LAN packet'
 
     @contextmanager
+    def reboot(self) -> Generator[dict[str, float]]:
+        """Yield during the SSH outage, then confirm a new OS boot before any Prysm query."""
+        before = self.sample_worker()['uptime']
+        evidence = {'uptime_before': before}
+        started = time.monotonic()
+        result = self._run(commands.tv_reboot(self.target), check=False)
+        if result.returncode not in (0, 255):
+            raise Failed('TV reboot command failed', result.stderr)
+        while self.reachable():
+            if time.monotonic() - started > 60:
+                raise Failed('SSH stayed up after the reboot request', evidence)
+            time.sleep(1)
+        try:
+            yield evidence
+        finally:
+            while not self.reachable():
+                if time.monotonic() - started > 180:
+                    raise Failed('SSH did not return after reboot', evidence)
+                time.sleep(2)
+            after = self.sample_worker()['uptime']
+            elapsed = time.monotonic() - started
+            evidence.update(uptime_after=after, elapsed=elapsed)
+            if before + elapsed - after < 5 or after > elapsed + 20:
+                raise Failed('TV uptime does not confirm a reboot', evidence)
+            deadline = time.monotonic() + 90
+            while not any(path == commands.SUPERVISOR for _, path in self.processes()):
+                if time.monotonic() >= deadline:
+                    raise Failed('supervisor did not start automatically after reboot', evidence)
+                time.sleep(2)
+
+    @contextmanager
     def standby(self, wake: Command) -> Generator[None]:
         try:
             self.call(commands.tv_standby(self.target))

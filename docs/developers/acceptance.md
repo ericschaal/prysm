@@ -508,13 +508,9 @@ package or Prysm's webOS app.
   to port 9 from this computer's address towards the TV, `local.wake-on-lan`)
   and tries SSH every 5 s for 90 s; a TV that still does not answer skips the
   cell (fails it when named). Without `mac` an unreachable TV is that skip at
-  once;
-- `auto_standby` (default `false`): use the physical remote by default. On a
-  TV with working Wake-on-LAN, set this to `true` and set `mac` to run
-  `acceptance tv full --tv-is-free -k standby` unattended. The runner sends
-  `com.webos.service.tvpower/power/powerOff` over SSH, then sends the wake
-  packet even if a check fails in standby. Automatic mode requires Prysm to
-  report `asleep`. Use the remote on TVs that lose their connection first;
+  once. The standby check also uses this address to wake the TV after a Luna
+  standby request. Without a MAC address it prompts for the physical remote.
+  Remove `auto_standby` from older configuration files;
 - `installed`: `"refuse"` (default) or `"replace"`, below;
 - `soak_seconds`: each soak's length (default 90);
 - `[tv.feed.cast]` (optional): tunes the test clip cast to the TV,
@@ -670,8 +666,18 @@ The checks, in order (`@only` marks a package's own):
   before waking the TV. The worker and portal return,
   Screen sync stays remembered, and the lights stay off. Slim resumes
   capture. The runner then requests Screen sync and checks UI frames again.
-  Last, as it ends the other states; deselect it (`-k "not standby"`) when
-  using the remote and nobody is at the TV.
+- reboot: the runner sends one orderly reboot over SSH per case, observes
+  the disconnect, verifies the uptime reset, and checks for the supervisor
+  before querying Prysm. Full checks that WLED stays off with its persistent
+  override and Effects remembered. Each slim cell tests both **Start with TV**
+  settings. The opposite manual choice must survive a service restart, then
+  the saved preference must win after reboot. The receiver counts actual frames
+  and uses null output for these checks.
+
+`--tv-is-free` includes standby and reboot. To select just the slim case with
+**Start with TV** on, run
+`acceptance tv slim --receiver mac --tv-is-free -k reboot_autostart_on`.
+The pytest `-k` expression selects tests by name.
 
 That nothing of Prysm is left after the uninstall is the `package` fixture's
 teardown, so it is checked also after a failure.
@@ -798,8 +804,8 @@ boot, its state with `getState` when `[tv] target` is set.
   Prysm's own Luna methods, ask which app is in front, launch or close
   Prysm's own app and bring the home screen to the front (no other app), and
   read Prysm's colours stream on the TV's loopback with python3 (`device.colours`,
-  after `device.reader-tools` found python3 and `timeout`). The optional automatic
-  standby check calls the TV power service. Wake-on-LAN packets originate on the
+  after `device.reader-tools` found python3 and `timeout`). Standby with a configured MAC
+  calls the TV power service. Reboot checks call `/sbin/reboot` over SSH. Wake-on-LAN packets originate on the
   runner. Nothing writes to system partitions or deletes `/var/lib/io.github.ericschaal.prysm`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command

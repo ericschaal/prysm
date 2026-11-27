@@ -712,13 +712,15 @@ def remote_standby() -> Generator[None]:
             pytest.skip(f'standby/wake skipped {note}'.strip())
 
     press("Put the TV in standby with the remote's power button. Answer y when the screen is off.")
-    yield
-    press('Wake the TV with the power button. Answer y when the picture is back.')
+    try:
+        yield
+    finally:
+        press('Wake the TV with the power button. Answer y when the picture is back.')
 
 
 @pytest.fixture
 def standby(config: Config, target: OnTv) -> AbstractContextManager[None]:
-    if not config.tv.auto_standby:
+    if not config.tv.mac:
         return remote_standby()
     wake = commands.wake_on_lan(config.tv.mac, host.local_address(config.tv.host))
     return target.tv.standby(wake)
@@ -726,10 +728,171 @@ def standby(config: Config, target: OnTv) -> AbstractContextManager[None]:
 
 def _standby_plan(cell: TvCell, config: Config) -> list[str]:
     sleep, wake = 'a person puts the TV in standby with the remote', 'a person wakes the TV'
-    if config.tv.auto_standby:
+    if config.tv.mac:
         sleep = commands.tv_standby(_ssh(config)).display()
         wake = commands.wake_on_lan(config.tv.mac, '192.0.2.10').display()
     return tv_checks.standby_plan(_planning(config), cell, config, sleep, wake)
 
 
 test_standby = planned(does=_standby_plan)(tv_checks.test_standby)
+
+
+def _reboot_plan(config: Config, during_outage: str) -> list[str]:
+    ssh = _ssh(config)
+    return [
+        *shown(commands.tv_sample_worker(ssh), commands.tv_reboot(ssh), commands.tv_reachable(ssh)),
+        'wait for SSH to disconnect',
+        during_outage,
+        'wait for SSH to return, confirm uptime reset and wait for the supervisor before querying Prysm',
+        *shown(commands.tv_sample_worker(ssh), commands.tv_processes(ssh), commands.tv_get_state(ssh)),
+    ]
+
+
+def _slim_reboot_plan(config: Config, autostart: bool) -> list[str]:
+    ssh = _ssh(config)
+    address = 'http://192.0.2.10:18787'
+    return [
+        'Configure the receiver with remote UI capture and null output; request Screen sync and verify frames',
+        *shown(commands.tv_set_preferences(ssh, autostart, address)),
+        *shown(commands.tv_set_enabled(ssh, autostart), commands.tv_set_enabled(ssh, not autostart)),
+        *shown(
+            commands.tv_uninstall(ssh), commands.tv_processes(ssh), commands.tv_setup(ssh), commands.tv_get_state(ssh)
+        ),
+        'verify manual enablement survives service restart and check received frames in GET /metrics',
+        *_reboot_plan(config, 'record receiver frame count during the SSH outage'),
+        f'verify enabled={autostart} after reboot and check received frames independently on the receiver',
+        'restore slim preferences and enablement',
+    ]
+
+
+def _check_slim_stream(
+    found: WebosTv, portal: Prysm, *, enabled: bool, autostart: bool, baseline: int
+) -> dict[str, object]:
+    """Require new frames while sending, or a stopped worker and an unchanged count for 30 seconds."""
+    state = tv.wait_state(found.get_state, lambda _: True, 30)
+    deadline = time.monotonic() + (45 if enabled else 30)
+    while True:
+        frames = portal.frames_received()
+        evidence: dict[str, object] = {'tv': state, 'frames_before': baseline, 'frames_after': frames}
+        if (
+            state is None
+            or state.get('enabled') is not enabled
+            or state['preferences'].get('autostart') is not autostart
+        ):
+            raise Failed('slim enablement or Start with TV differs from the request', evidence)
+        if enabled:
+            if tv.capturing(state) and tv.encoding(state) is not None and frames > baseline:
+                return evidence
+        elif state['worker']['phase'] != 'stopped' or frames != baseline:
+            raise Failed('disabled slim streamed or its worker did not stay stopped', evidence)
+        if time.monotonic() >= deadline:
+            if enabled:
+                raise Failed('enabled slim did not deliver new frames', evidence)
+            return evidence
+        time.sleep(1)
+        state = found.get_state()
+
+
+def _slim_reboot(found: WebosTv, portal: Prysm, *, autostart: bool) -> dict[str, object]:
+    settings = host.settings({'kind': 'null'}, capture(Flavour.SLIM, 320, 180, 15, True, tv_checks.Encoding.RAW))
+    if portal.replace_settings(settings).status != 200:
+        raise Failed('receiver refused the reboot test settings')
+    state = found.get_state()
+    if state is None:
+        raise Failed('slim did not answer before the reboot test')
+    preferences = state['preferences']
+    try:
+        found.set_preferences({**preferences, 'autostart': autostart})
+        if not autostart:
+            found.call(commands.tv_set_enabled(found.target, False))
+            if tv.wait_state(found.get_state, lambda s: s['worker']['phase'] == 'stopped', 30) is None:
+                raise Failed('could not disable slim before the manual enable request')
+        found.call(commands.tv_set_enabled(found.target, True))
+        host_cells.screen_sync(portal, 45)
+        initial = _check_slim_stream(
+            found, portal, enabled=True, autostart=autostart, baseline=portal.frames_received()
+        )
+        if autostart:
+            found.call(commands.tv_set_enabled(found.target, False))
+            if (
+                tv.wait_state(found.get_state, lambda s: not s['enabled'] and s['worker']['phase'] == 'stopped', 30)
+                is None
+            ):
+                raise Failed('slim did not stop after manual disable')
+        before = found.sample_worker()['uptime']
+        found.stop()
+        baseline = portal.frames_received()
+        found.start_service()
+        restarted = _check_slim_stream(found, portal, enabled=not autostart, autostart=autostart, baseline=baseline)
+        if found.sample_worker()['uptime'] < before:
+            raise Failed('TV rebooted during the service-only restart')
+        with found.reboot() as boot:
+            offline = portal.frames_received()
+        after = _check_slim_stream(
+            found, portal, enabled=autostart, autostart=autostart, baseline=portal.frames_received()
+        )
+        return {
+            'initial': initial,
+            'service_restart': restarted,
+            'reboot': boot,
+            'frames_while_offline': offline,
+            'after_reboot': after,
+        }
+    finally:
+        found.set_preferences(preferences)
+        found.call(commands.tv_set_enabled(found.target, state['enabled']))
+
+
+@only(Flavour.SLIM)
+@planned(does=lambda cell, config: _slim_reboot_plan(config, True))
+def test_reboot_autostart_on(target: OnTv, prysm: Prysm, record: Record) -> None:
+    """Slim stays manually disabled through a service restart and streams on the next boot."""
+    record('disabled after service restart, streaming after reboot', _slim_reboot(target.tv, prysm, autostart=True))
+
+
+@only(Flavour.SLIM)
+@planned(does=lambda cell, config: _slim_reboot_plan(config, False))
+def test_reboot_autostart_off(target: OnTv, prysm: Prysm, record: Record) -> None:
+    """Slim resumes manual streaming after a service restart and stays disabled after reboot."""
+    record('streaming after service restart, disabled after reboot', _slim_reboot(target.tv, prysm, autostart=False))
+
+
+@only(Flavour.FULL)
+@planned(
+    does=lambda cell, config: [
+        'Remember Screen sync, set Prysm Off and confirm the session stopped',
+        *_reboot_plan(config, 'POST /json/state on=false, lor=2, tt=0 and verify idle WLED'),
+        'verify the worker and portal return, Effects remembered, lights off and override retained',
+    ]
+)
+def test_reboot_wled_override_off(target: OnTv, prysm: Prysm, wled: Wled, record: Record) -> None:
+    """Full starts its worker and leaves WLED off with Effects remembered under its persistent override."""
+    if (
+        prysm.set_target(prysm_api.Target.SCREEN_SYNC).status != 204
+        or prysm.wait(lambda s: s['control']['remembered'] == 'screen_sync' and not s['control']['busy'], 30) is None
+    ):
+        raise Failed('could not establish remembered Screen sync before reboot')
+    if prysm.set_target(prysm_api.Target.OFF).status != 204:
+        raise Failed('Prysm refused Off before reboot')
+    if (
+        prysm.wait(lambda s: s['target'] == prysm_api.Target.OFF and s['control']['remembered'] == 'screen_sync', 30)
+        is None
+    ):
+        raise Failed('expected Off with Screen sync remembered before reboot')
+    tv_checks.idle_lights(wled, on=False)
+
+    def off_override(si: tv_checks.Si) -> bool:
+        return not si['state']['on'] and si['state']['lor'] == 2 and not si['info']['live']
+
+    with target.tv.reboot() as boot:
+        wled.post_state({'on': False, 'lor': 2, 'tt': 0})
+        if wled.wait(off_override, 10) is None:
+            raise Failed('could not establish WLED off with persistent override during reboot', wled.si())
+    seen = tv.wait_state(target.tv.get_state, lambda s: tv.running(s) is not None, 60)
+    if seen is None:
+        raise Failed('full worker did not start after reboot')
+    evidence: dict[str, object] = {'reboot': boot, 'supervisor': seen}
+    tv_checks.check_startup_off(target.tv.wait_portal(), wled, evidence, remembered='effects')
+    if not off_override(wled.si()):
+        raise Failed('WLED did not retain its override', evidence)
+    record('running worker, Effects remembered, lights off and override retained', evidence)
