@@ -1706,35 +1706,39 @@ const OFF_IDLE: &str = r#"{"state":{"on":false},"info":{"live":false}}"#;
 fn production_resume_defers_to_override_and_explicit_open_clears_it() {
     use prysm_ports::OutputDisplay;
 
-    let device = Device::new(vec![Reply::Json(OVERRIDE_WHILE_OFF), Reply::Json(OK)]);
-    let settings = device.settings(
-        LedCounts {
-            bottom: 1,
-            ..LedCounts::default()
-        },
-        false,
-    );
-    let stop = Hangup::default();
-    let handoff = device
-        .wled
-        .open_for_sync(&settings, OpenIntent::Resume, &stop)
-        .unwrap();
-    let OutputOpen::Handoff(seen) = handoff else {
-        panic!("automatic resume took over a device-local override");
-    };
-    assert_eq!(seen.power, Power::Off);
-    assert_eq!(seen.display, OutputDisplay::Override);
-    device.check_request();
+    const OVERRIDE_UNTIL_STREAM_ENDS: &str =
+        r#"{"state":{"on":false,"lor":1},"info":{"live":true,"lm":"DDP","lip":"127.0.0.2"}}"#;
+    for state in [OVERRIDE_UNTIL_STREAM_ENDS, OVERRIDE_WHILE_OFF] {
+        let device = Device::new(vec![Reply::Json(state), Reply::Json(OK)]);
+        let settings = device.settings(
+            LedCounts {
+                bottom: 1,
+                ..LedCounts::default()
+            },
+            false,
+        );
+        let stop = Hangup::default();
+        let handoff = device
+            .wled
+            .open_for_sync(&settings, OpenIntent::Resume, &stop)
+            .unwrap();
+        let OutputOpen::Handoff(seen) = handoff else {
+            panic!("automatic resume took over a device-local override");
+        };
+        assert_eq!(seen.power, Power::Off);
+        assert_eq!(seen.display, OutputDisplay::Override);
+        device.check_request();
 
-    let output = device
-        .wled
-        .open_for_sync(&settings, OpenIntent::Explicit, &stop)
-        .unwrap();
-    let OutputOpen::Streaming(output) = output else {
-        panic!("explicit open did not stream")
-    };
-    output.release(OutputRelease::Local, &stop).unwrap();
-    device.expect(&[json!({"on": true, "lor": 0, "tt": 0})]);
+        let output = device
+            .wled
+            .open_for_sync(&settings, OpenIntent::Explicit, &stop)
+            .unwrap();
+        let OutputOpen::Streaming(output) = output else {
+            panic!("explicit open did not stream")
+        };
+        output.release(OutputRelease::Local, &stop).unwrap();
+        device.expect(&[json!({"on": true, "lor": 0, "tt": 0})]);
+    }
 }
 
 #[test]

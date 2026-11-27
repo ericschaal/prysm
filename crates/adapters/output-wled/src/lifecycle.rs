@@ -100,31 +100,6 @@ pub fn readiness_failure(error: Error) -> Readiness<Error> {
     }
 }
 
-/// Permission carried by the request that starts Screen sync.
-pub(crate) enum ScreenSyncRequest {
-    Explicit,
-    Resume(WledObservation),
-}
-
-/// Prepare WLED for DDP once capture is open. DDP packets start a finite
-/// realtime lock, so preparing a session with no frames cannot freeze WLED
-/// in JSON live mode.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ScreenSyncStart {
-    HandOff(OutputObservation),
-    Prepare(Value),
-}
-
-impl ScreenSyncRequest {
-    pub(crate) fn start(self) -> ScreenSyncStart {
-        match self {
-            Self::Explicit => ScreenSyncStart::Prepare(json!({"on": true, "lor": 0, "tt": 0})),
-            Self::Resume(state) if state.overridden => ScreenSyncStart::HandOff(state.output()),
-            Self::Resume(_) => ScreenSyncStart::Prepare(json!({"on": true, "tt": 0})),
-        }
-    }
-}
-
 /// Power WLED for Effects when needed, preserving its display settings.
 pub(crate) fn effects_power_command(status: WledObservation) -> Option<Value> {
     (status.power == Power::Off).then(|| json!({"on": true, "tt": 0}))
@@ -170,26 +145,13 @@ mod tests {
     }
 
     #[test]
-    fn explicit_open_clears_either_override_and_resume_preserves_it() {
-        let explicit = ScreenSyncRequest::Explicit.start();
-        assert_eq!(
-            explicit,
-            ScreenSyncStart::Prepare(json!({"on": true, "lor": 0, "tt": 0}))
-        );
+    fn streaming_display_distinguishes_override_external_and_idle() {
         for lor in [1, 2] {
             let seen = state(true, lor, "DDP", "");
-            assert_eq!(
-                ScreenSyncRequest::Resume(seen).start(),
-                ScreenSyncStart::HandOff(seen.output())
-            );
             assert_eq!(seen.during_stream(Some(OURS)), StreamDisplay::HandOff);
         }
 
         let idle = state(true, 0, "", "");
-        assert_eq!(
-            ScreenSyncRequest::Resume(idle).start(),
-            ScreenSyncStart::Prepare(json!({"on": true, "tt": 0}))
-        );
         let external = state(true, 0, "DDP", "127.0.0.2");
         assert_eq!(external.during_stream(Some(OURS)), StreamDisplay::Contended);
         assert_eq!(idle.during_stream(Some(OURS)), StreamDisplay::Unknown);

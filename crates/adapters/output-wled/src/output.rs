@@ -3,14 +3,14 @@ use crate::classify::{self, Cause};
 use crate::ddp::{WledRenderer, route_address};
 use crate::dither::Encoding;
 use crate::http::{self, Deadline};
-use crate::lifecycle::{self, ScreenSyncRequest, ScreenSyncStart, WledObservation};
+use crate::lifecycle::{self, WledObservation};
 use crate::observe::{self, Observer};
 use crate::{LedCounts, WledSettings};
 use prysm_core::EdgeColors;
 use prysm_ports::{
     Candidate, DeviceReport, Error, Hangup, IdleMode, LedOutput, OpenFailure, OpenIntent,
-    OutputFactory, OutputObservationState, OutputOpen, OutputRelease, Power, Readiness, Result,
-    ValidationError, system_lookup,
+    OutputDisplay, OutputFactory, OutputObservationState, OutputOpen, OutputRelease, Power,
+    Readiness, Result, ValidationError, system_lookup,
 };
 use serde_json::{Value, json};
 use std::net::SocketAddr;
@@ -179,18 +179,18 @@ impl OutputFactory for Wled {
         let device = self
             .device(settings, readiness.remaining(), stop)
             .map_err(OpenFailure::Untouched)?;
-        let request = match intent {
-            OpenIntent::Explicit => ScreenSyncRequest::Explicit,
+        let command = match intent {
+            OpenIntent::Explicit => json!({"on": true, "lor": 0, "tt": 0}),
             OpenIntent::Resume => {
                 let observed = device
                     .observe(readiness, stop)
-                    .map_err(OpenFailure::Untouched)?;
-                ScreenSyncRequest::Resume(observed)
+                    .map_err(OpenFailure::Untouched)?
+                    .output();
+                if observed.display == OutputDisplay::Override {
+                    return Ok(OutputOpen::Handoff(observed));
+                }
+                json!({"on": true, "tt": 0})
             }
-        };
-        let command = match request.start() {
-            ScreenSyncStart::HandOff(observed) => return Ok(OutputOpen::Handoff(observed)),
-            ScreenSyncStart::Prepare(command) => command,
         };
         let renderer = Self::renderer(&device)?;
         device.apply("live", &command, deadline, stop)?;

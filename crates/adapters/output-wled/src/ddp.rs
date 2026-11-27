@@ -78,26 +78,11 @@ fn quantize(value: f32) -> u8 {
     (value * 255.0 + 0.5) as u8
 }
 
-/// Packed 8-bit RGB channels, including the DDP encoding contract.
-/// Keeping this alongside the allocation prevents raw bytes losing their format.
-#[derive(Debug, Default)]
-struct Rgb8Payload(Vec<u8>);
-impl Rgb8Payload {
-    fn config() -> PixelConfig {
-        PixelConfig {
-            data_type: ddp_rs::protocol::DataType::RGB,
-            data_size: PixelFormat::Pixel8Bits,
-            customer_defined: false,
-        }
-    }
-    fn push(&mut self, color: Color) {
-        self.0.extend_from_slice(&[color.r, color.g, color.b]);
-    }
-    fn clear_reserve(&mut self, pixels: usize) {
-        self.0.clear();
-        self.0.reserve(pixels * 3);
-    }
-}
+const RGB8: PixelConfig = PixelConfig {
+    data_type: ddp_rs::protocol::DataType::RGB,
+    data_size: PixelFormat::Pixel8Bits,
+    customer_defined: false,
+};
 
 /// A nonblocking RGB renderer for one WLED instance.
 ///
@@ -109,7 +94,7 @@ impl Rgb8Payload {
 #[derive(Debug)]
 pub(crate) struct WledRenderer {
     connection: DDPConnection,
-    rgb: Rgb8Payload,
+    rgb: Vec<[u8; 3]>,
     /// Every send fails with this instead of going out.
     #[cfg(test)]
     refusal: Option<fn() -> std::io::Error>,
@@ -127,12 +112,10 @@ impl WledRenderer {
             .ok_or(DDPError::NoValidSocketAddr)?;
         let socket = bind(destination)?;
         socket.set_nonblocking(true)?;
-        let rgb = Rgb8Payload::default();
-        let connection =
-            DDPConnection::try_new(destination, Rgb8Payload::config(), ID::Default, socket)?;
+        let connection = DDPConnection::try_new(destination, RGB8, ID::Default, socket)?;
         Ok(Self {
             connection,
-            rgb,
+            rgb: Vec::new(),
             #[cfg(test)]
             refusal: None,
         })
@@ -154,10 +137,10 @@ impl WledRenderer {
         if !self.prepare(colors.len()) {
             return Ok(());
         }
-        for &color in colors {
-            self.rgb.push(color);
+        for &Color { r, g, b } in colors {
+            self.rgb.push([r, g, b]);
         }
-        self.connection.write(&self.rgb.0)?;
+        self.connection.write(self.rgb.as_flattened())?;
         Ok(())
     }
 
@@ -186,7 +169,8 @@ impl WledRenderer {
             .chain(edges.right.iter_resampled(right))
             .chain(edges.bottom.iter_resampled(bottom).rev());
         for (led, color) in (0..).zip(colors) {
-            self.rgb.push(encoding.encode(color, led));
+            let Color { r, g, b } = encoding.encode(color, led);
+            self.rgb.push([r, g, b]);
         }
         match self.send() {
             Ok(_) => Ok(()),
@@ -206,7 +190,7 @@ impl WledRenderer {
         if let Some(refusal) = self.refusal {
             return Err(refusal().into());
         }
-        self.connection.write(&self.rgb.0)
+        self.connection.write(self.rgb.as_flattened())
     }
 
     /// Clears the payload for `count` LEDs; `false` for none, which sends
@@ -215,7 +199,8 @@ impl WledRenderer {
         if count == 0 {
             return false;
         }
-        self.rgb.clear_reserve(count);
+        self.rgb.clear();
+        self.rgb.reserve(count);
         true
     }
 }
@@ -293,7 +278,7 @@ mod tests {
             [0x41, 1, 0x0b, 1, 0, 0, 0, 0, 0, 6, 12, 34, 56, 78, 90, 123]
         );
         let packet = PacketRef::from_bytes(&bytes).unwrap();
-        assert_eq!(packet.header.pixel_config, Rgb8Payload::config());
+        assert_eq!(packet.header.pixel_config, RGB8);
         assert_eq!(packet.header.pixel_config.data_type, DataType::RGB);
         assert_eq!(
             packet.header.pixel_config.data_size,
