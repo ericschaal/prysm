@@ -508,7 +508,13 @@ package or Prysm's webOS app.
   to port 9 from this computer's address towards the TV, `local.wake-on-lan`)
   and tries SSH every 5 s for 90 s; a TV that still does not answer skips the
   cell (fails it when named). Without `mac` an unreachable TV is that skip at
-  once. The runner never puts the TV to sleep;
+  once;
+- `auto_standby` (default `false`): use the physical remote by default. On a
+  TV with working Wake-on-LAN, set this to `true` and set `mac` to run
+  `acceptance tv full --tv-is-free -k standby` unattended. The runner sends
+  `com.webos.service.tvpower/power/powerOff` over SSH, then sends the wake
+  packet even if a check fails in standby. Automatic mode requires Prysm to
+  report `asleep`. Use the remote on TVs that lose their connection first;
 - `installed`: `"refuse"` (default) or `"replace"`, below;
 - `soak_seconds`: each soak's length (default 90);
 - `[tv.feed.cast]` (optional): tunes the test clip cast to the TV,
@@ -659,13 +665,13 @@ The checks, in order (`@only` marks a package's own):
   and nothing failing (no `failure` in Prysm's state or the TV's `getState`,
   the session not faulted), as designed; then with the UI again the frames
   return, of the UI size;
-- standby and wake (UI state; a person presses power): the TV not active, or
+- standby and wake (UI state; remote or automatic): the TV not active, or
   not answering, within 60 s. For full, the runner sets and verifies WLED off
-  before asking the person to wake the TV. The worker and portal return,
+  before waking the TV. The worker and portal return,
   Screen sync stays remembered, and the lights stay off. Slim resumes
   capture. The runner then requests Screen sync and checks UI frames again.
   Last, as it ends the other states; deselect it (`-k "not standby"`) when
-  nobody is at the TV.
+  using the remote and nobody is at the TV.
 
 That nothing of Prysm is left after the uninstall is the `package` fixture's
 teardown, so it is checked also after a failure.
@@ -791,8 +797,10 @@ boot, its state with `getState` when `[tv] target` is set.
   run the package's `setup.sh` and the supervisor's `uninstall`, call
   Prysm's own Luna methods, ask which app is in front, launch or close
   Prysm's own app and bring the home screen to the front (no other app), and
-  read Prysm's colours stream on the TV's loopback with python3 (`device.colours`, after `device.reader-tools` found python3 and `timeout`; both write nothing); here, one wake-on-LAN packet. Nothing
-  writes to system partitions or deletes `/var/lib/io.github.ericschaal.prysm`.
+  read Prysm's colours stream on the TV's loopback with python3 (`device.colours`,
+  after `device.reader-tools` found python3 and `timeout`). The optional automatic
+  standby check calls the TV power service. Wake-on-LAN packets originate on the
+  runner. Nothing writes to system partitions or deletes `/var/lib/io.github.ericschaal.prysm`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command
   the TV cells' plans name ([test](../../scripts/acceptance/tests/test_acceptance_tv.py)). On the Chromecast,
@@ -840,8 +848,7 @@ script needs Local Network access; the runner says so.
 - Not verified on the bench: `[linux] target = "local"` on a Linux runner
   (the binary cells use the Mac's code; the package and image cells skip it
   as not implemented), `installed = "replace"` on the Linux package cell,
-  the runner's own wake-on-LAN packet (the TV answered each time), and on
-  the TV the retry after a failed UI capture open, which only the capture
+  and on the TV the retry after a failed UI capture open, which only the capture
   adapter's tests exercise.
 
 ## Develop the runner

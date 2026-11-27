@@ -426,6 +426,38 @@ class Wake(unittest.TestCase):
 
     MAC = '00:00:5E:00:53:01'
 
+    def test_standby_wakes_the_tv_even_if_the_asleep_check_fails(self) -> None:
+        found = recorded(
+            ('tv.standby', ok('{"returnValue":true}')), ('local.wake-on-lan', ok()), ('tv.get-state', ok(STATE))
+        )
+        wake = commands.wake_on_lan(self.MAC, '192.0.2.10')
+        with self.assertRaisesRegex(Failed, 'lights still live'), found.standby(wake):
+            self.assertEqual(calls(found), ['tv.standby'])
+            raise Failed('lights still live')
+        self.assertEqual(calls(found), ['tv.standby', 'local.wake-on-lan', 'tv.get-state'])
+
+    def test_unattended_standby_requires_positive_evidence(self) -> None:
+        stopped: tv.State = {'power': tv.Power.ASLEEP, 'worker': {'phase': 'stopped'}}
+        states = [
+            None,
+            {'power': tv.Power.SCREEN_SAVER},
+            {'power': tv.Power.ASLEEP, 'worker': {'phase': 'running'}},
+            stopped,
+        ]
+        with no_wait():
+            observed = tv_checks.wait_standby(mock.Mock(side_effect=states), Flavour.FULL, remote_confirmed=False)
+        self.assertEqual(observed, stopped)
+        with (
+            mock.patch.object(tv_checks, 'STANDBY_SECONDS', 0),
+            self.assertRaisesRegex(Failed, 'did not reach standby'),
+        ):
+            tv_checks.wait_standby(lambda: None, Flavour.FULL, remote_confirmed=False)
+        self.assertIsNone(tv_checks.wait_standby(lambda: None, Flavour.FULL, remote_confirmed=True))
+
+    def test_automatic_standby_needs_a_wake_address(self) -> None:
+        with self.assertRaisesRegex(config.ConfigError, 'requires mac'):
+            config.parse({'tv': {'auto_standby': True}})
+
     def test_an_answering_tv_is_not_woken(self) -> None:
         found = recorded(('tv.reachable', ok('prysm-acceptance-ok\n')))
         self.assertIsNone(found.reach(self.MAC, lambda: '192.0.2.10'))

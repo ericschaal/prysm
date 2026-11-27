@@ -120,7 +120,7 @@ class AllowList(unittest.TestCase):
             with self.subTest(command.template):
                 confined(self, command)
 
-    def test_luna_calls_only_prysm_and_the_install_service(self) -> None:
+    def test_luna_calls_only_the_listed_methods(self) -> None:
         for factory in commands.TEMPLATES.values():
             command = factory()
             for uri in re.findall(r'luna://\S+', command.remote or ''):
@@ -128,6 +128,7 @@ class AllowList(unittest.TestCase):
                     uri,
                     rf'^luna://({re.escape(commands.SERVICE)}/(getState|setPreferences|setEnabled|uninstall)|'
                     r'com\.webos\.appInstallService/dev/(install|remove)|'
+                    r'com\.webos\.service\.tvpower/power/powerOff|'
                     r'com\.webos\.service\.applicationManager/(getForegroundAppInfo|launch|closeByAppId))$',
                 )
             if command.remote and 'luna-send' in command.remote:

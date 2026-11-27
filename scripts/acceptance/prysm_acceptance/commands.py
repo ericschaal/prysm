@@ -12,12 +12,11 @@ boot hook and data directory, through the documented install path
 supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
-Beyond Prysm's own service, Luna is asked only which app is in front, and to
-launch or close Prysm's own app (`APP`) and bring the home screen to the front
-(`HOME_APP`), each id fixed in its template.
+The application manager reports the foreground app, launches or closes Prysm's app
+and opens the home screen. The optional standby check uses tvpower/power/powerOff.
 When the TV does not answer and `[tv] mac` is set, the runner sends it one
-wake-on-LAN packet (`local.wake-on-lan`, a UDP broadcast, no process); it
-never puts the TV to sleep.
+wake-on-LAN packet (`local.wake-on-lan`, a UDP broadcast, no process). Automatic standby uses the same
+packet to wake the TV.
 
 On a Linux target over SSH (`[linux] target = "ssh://USER@HOST"`) the runner
 writes only in the run's own directory, `$HOME/.prysm-acceptance/RUN` (the
@@ -320,6 +319,10 @@ def tv_remove_app(host: str) -> Command:
     """Remove the app through the TV's install service (what the webOS CLI's `ares-install --remove` calls),
     after the supervisor's uninstall: the package has no removal script."""
     return _install_service('tv.remove-app', host, 'remove', {}, r'"removed"')
+
+
+def tv_standby(host: str) -> Command:
+    return _luna('tv.standby', host, 'com.webos.service.tvpower/power/powerOff', {'reason': 'localKey'})
 
 
 def tv_get_state(host: str) -> Command:
@@ -1007,6 +1010,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.setup': lambda: tv_setup('root@tv.example'),
     'tv.supervisor-uninstall': lambda: tv_supervisor_uninstall('root@tv.example'),
     'tv.remove-app': lambda: tv_remove_app('root@tv.example'),
+    'tv.standby': lambda: tv_standby('root@tv.example'),
     'tv.get-state': lambda: tv_get_state('root@tv.example'),
     'tv.uninstall': lambda: tv_uninstall('root@tv.example'),
     'tv.set-enabled': lambda: tv_set_enabled('root@tv.example', True),

@@ -109,6 +109,7 @@ class Tv:
     ipk_full: str = 'dist/prysm-tv-full.ipk'
     ipk_slim: str = 'dist/prysm-tv-slim.ipk'
     mac: str = ''  # the TV's hardware address for wake-on-LAN; empty: an unreachable TV is not woken
+    auto_standby: bool = False
     installed: Installed = Installed.REFUSE
     soak_seconds: int = 90
     feed: CastFeed = field(default_factory=CastFeed)  # the clip cast to the TV: always, the table only tunes it
@@ -302,6 +303,8 @@ def _check_tv(tv: Tv) -> None:
             if not tv.target.startswith(SSH):
                 raise ConfigError('[tv] target: "ssh://root@HOST"')
             commands.ssh_target(tv.ssh)
+        if tv.auto_standby and not tv.mac:
+            raise ConfigError('[tv] auto_standby requires mac for wake-on-LAN')
         if tv.mac:
             commands.wake_on_lan(tv.mac, '192.0.2.1')
     except commands.Refused as error:

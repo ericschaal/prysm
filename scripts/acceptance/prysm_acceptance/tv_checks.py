@@ -19,11 +19,9 @@ from pathlib import Path
 import time
 from typing import TypedDict, TypeVar, cast
 
-import pytest
-
 from prysm_acceptance import edges_clip, feed_cast, host, host_cells, options, prysm_api, transport, tv
 from prysm_acceptance.bench import only
-from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person, tell_person
+from prysm_acceptance.checks import Bench, Failed, Skipped, tell_person
 from prysm_acceptance.config import SSH, Config
 from prysm_acceptance.host import Host, Sender, shown
 from prysm_acceptance.host_cells import Clip, Record, screen_sync
@@ -719,18 +717,17 @@ def check_startup_off(prysm: Prysm, wled: Wled, evidence: dict[str, object]) -> 
         state = prysm.state()
 
 
-@planned(
-    does=lambda found, cell, config: [
+def standby_plan(found: Tv, cell: TvCell, config: Config, sleep: str, wake: str) -> list[str]:
+    return [
         *state_plan(found, Shown.UI, config, include_ui=True),
-        'a person puts the TV in standby with the remote',
+        sleep,
         *shown(found.state_command()),
-        (
-            f'full worker stopped in standby, or TV unreachable, within {STANDBY_SECONDS} s'
-            if cell.flavour == Flavour.FULL
-            else f'TV no longer active, or unreachable, within {STANDBY_SECONDS} s'
-        ),
+        f'wait up to {STANDBY_SECONDS} s for standby'
+        + (' and a stopped worker' if cell.flavour == Flavour.FULL else '')
+        + ('' if config.tv.auto_standby else ' (or no reply after remote confirmation)'),
         *([idle_lights_plan(config, on=False)] if cell.flavour == Flavour.FULL else []),
-        'a person wakes the TV; wait up to 90 s for active power and a running worker',
+        wake,
+        'wait up to 90 s for active power and a running worker',
         (
             f'GET PORTAL/api/v1/state and WLED /json/si: confirmed Off and no stream for {QUIET_SECONDS} s'
             if cell.flavour == Flavour.FULL
@@ -739,38 +736,42 @@ def check_startup_off(prysm: Prysm, wled: Wled, evidence: dict[str, object]) -> 
         "then the UI state again (standby ended Prysm's app):",
         *state_plan(found, Shown.UI, config, include_ui=True),
     ]
-)
-def test_standby(cell: TvCell, screen: Screen, prysm: Prysm, wled: Wled, record: Record) -> None:
-    """Standby and wake (a person presses power), from the UI state: the TV leaves active (a TV in standby may
-    not answer at all), then is active with a running worker. Full leaves the lights off; slim resumes capture.
-    The final explicit Screen sync request checks UI capture again."""
-    reached = in_state(screen, Shown.UI, prysm, _ui_section(cell))
-    answer, note = ask_person(
-        "Put the TV in standby with the remote's power button (do not unplug). Answer y once the screen is off.",
-        (Answer.YES, Answer.SKIP),
-    )
-    if answer != Answer.YES:
-        pytest.skip(f'standby skipped {note}'.strip())
-    tell_person(f'waiting until the TV is not active, or does not answer (up to {STANDBY_SECONDS} s)')
+
+
+def wait_standby(read: Callable[[], tv.State | None], flavour: Flavour, *, remote_confirmed: bool) -> tv.State | None:
     deadline = time.monotonic() + STANDBY_SECONDS
-    while (asleep := screen.tv.get_state()) is not None:
-        if cell.flavour == Flavour.FULL:
-            if asleep['power'] == Power.ASLEEP and asleep['worker']['phase'] == 'stopped':
-                break
-        elif asleep['power'] != Power.ACTIVE:
-            break
+    while True:
+        state = read()
+        if state is None:
+            if remote_confirmed:
+                return None
+        elif flavour == Flavour.FULL:
+            if state['power'] == Power.ASLEEP and state['worker']['phase'] == 'stopped':
+                return state
+        elif state['power'] == Power.ASLEEP or (remote_confirmed and state['power'] != Power.ACTIVE):
+            return state
         if time.monotonic() >= deadline:
-            raise Failed(f'the TV did not reach standby within {STANDBY_SECONDS} s', asleep)
+            raise Failed(f'the TV did not reach standby within {STANDBY_SECONDS} s', state)
         time.sleep(3)
-    evidence: dict[str, object] = {'state': reached, 'standby_state': asleep}
-    if cell.flavour == Flavour.FULL:
-        evidence['wled_before_wake'] = idle_lights(wled, on=False)
-    answer, note = ask_person(
-        'Wake the TV with the power button. Answer y when the picture is back.',
-        (Answer.YES, Answer.SKIP),
-    )
-    if answer != Answer.YES:
-        pytest.skip(f'wake skipped {note}'.strip())
+
+
+def test_standby(
+    cell: TvCell,
+    screen: Screen,
+    prysm: Prysm,
+    wled: Wled,
+    record: Record,
+    standby: contextlib.AbstractContextManager[None],
+    config: Config,
+) -> None:
+    """Standby stops capture. On wake full respects WLED power and slim resumes capture."""
+    reached = in_state(screen, Shown.UI, prysm, _ui_section(cell))
+    with standby:
+        tell_person(f'waiting for standby (up to {STANDBY_SECONDS} s)')
+        asleep = wait_standby(screen.tv.get_state, cell.flavour, remote_confirmed=not config.tv.auto_standby)
+        evidence: dict[str, object] = {'state': reached, 'standby_state': asleep}
+        if cell.flavour == Flavour.FULL:
+            evidence['wled_before_wake'] = idle_lights(wled, on=False)
     tell_person('waiting for the worker after wake (up to 90 s)')
     worker_ready = tv.running if cell.flavour == Flavour.FULL else tv.capturing
     awake = tv.wait_state(

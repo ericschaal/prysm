@@ -27,7 +27,8 @@ only Prysm's own files there (`commands.TV_READ_PATHS`, `TV_WRITE_PATHS`),
 and launches or closes no app but Prysm's.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import socket
@@ -54,7 +55,7 @@ from prysm_acceptance import (
 )
 from prysm_acceptance.artifact import Artifact
 from prysm_acceptance.bench import Planner, only, unavailable, uninterrupted, warn_at_end
-from prysm_acceptance.checks import Bench, Failed
+from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
 from prysm_acceptance.config import SSH, Config, Installed
 from prysm_acceptance.host import Host, Sender, shown
 from prysm_acceptance.host_cells import Clip, Record, wled_as_found, wled_restored, wled_saved
@@ -701,4 +702,34 @@ def test_reinstall_wled_on(
 
 test_ui_only = taken(tv_checks.test_ui_only)
 test_ui_off = taken(tv_checks.test_ui_off)
-test_standby = taken(tv_checks.test_standby)
+
+
+@contextmanager
+def remote_standby() -> Generator[None]:
+    def press(prompt: str) -> None:
+        answer, note = ask_person(prompt, (Answer.YES, Answer.SKIP))
+        if answer != Answer.YES:
+            pytest.skip(f'standby/wake skipped {note}'.strip())
+
+    press("Put the TV in standby with the remote's power button. Answer y when the screen is off.")
+    yield
+    press('Wake the TV with the power button. Answer y when the picture is back.')
+
+
+@pytest.fixture
+def standby(config: Config, target: OnTv) -> AbstractContextManager[None]:
+    if not config.tv.auto_standby:
+        return remote_standby()
+    wake = commands.wake_on_lan(config.tv.mac, host.local_address(config.tv.host))
+    return target.tv.standby(wake)
+
+
+def _standby_plan(cell: TvCell, config: Config) -> list[str]:
+    sleep, wake = 'a person puts the TV in standby with the remote', 'a person wakes the TV'
+    if config.tv.auto_standby:
+        sleep = commands.tv_standby(_ssh(config)).display()
+        wake = commands.wake_on_lan(config.tv.mac, '192.0.2.10').display()
+    return tv_checks.standby_plan(_planning(config), cell, config, sleep, wake)
+
+
+test_standby = planned(does=_standby_plan)(tv_checks.test_standby)

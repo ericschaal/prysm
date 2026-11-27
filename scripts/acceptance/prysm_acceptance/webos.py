@@ -2,7 +2,8 @@
 uninstall, Prysm's files, the worker's load (`tv.Tv`), and Prysm as it may already be there
 (`installed.Existing`)."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 import json
 import re
 import time
@@ -94,7 +95,7 @@ class WebosTv:
     def reach(self, mac: str, towards: Callable[[], str]) -> str | None:
         """Why the TV cannot be reached over SSH; None when it answers. Only when it does not and `mac` is set,
         one wake-on-LAN packet is sent first, from `towards()` (this computer's address towards the TV), and SSH
-        is tried every 5 s for `WAKE_SECONDS`. The runner never puts the TV to sleep."""
+        is tried every 5 s for `WAKE_SECONDS`."""
         if self.reachable():
             return None
         if not mac:
@@ -113,6 +114,16 @@ class WebosTv:
             if self.reachable():
                 return None
         return f'the TV ({self.target}) does not answer over SSH {WAKE_SECONDS} s after a wake-on-LAN packet'
+
+    @contextmanager
+    def standby(self, wake: Command) -> Generator[None]:
+        try:
+            self.call(commands.tv_standby(self.target))
+            yield
+        finally:
+            self._run(wake)
+            if tv.wait_state(self.get_state, lambda s: s['power'] == tv.Power.ACTIVE, WAKE_SECONDS) is None:
+                raise Failed('TV did not return to active power after wake-on-LAN')
 
     # ---- the service ---------------------------------------------------------
 
