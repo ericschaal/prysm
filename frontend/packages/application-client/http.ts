@@ -29,6 +29,7 @@ import {
   type ColorsEvent,
   type DiscoveryClient,
   failureSections,
+  failureSide,
   isObject,
   known,
   type LightingFailure,
@@ -78,16 +79,11 @@ async function responseError(response: Response): Promise<ApplicationError> {
   if (isFailure(body)) {
     if (body.kind !== 'adapter') return new ApplicationError(body);
     const { message, section } = body;
-    const side = failureSideOf(section, undefined);
-    return new ApplicationError({
-      kind: 'adapter',
-      message,
-      ...(side && { section: side }),
-    });
+    return new ApplicationError(adapterFailure(message, section));
   }
   if (isFutureFailure(body)) {
-    const { message, section, field } = body;
-    const side = failureSideOf(section, field);
+    const { message } = body;
+    const side = failureSide(body);
     return side
       ? new ApplicationError({ kind: 'adapter', message, section: side })
       : new ApplicationError({
@@ -313,12 +309,13 @@ async function openEvents<T>(
  */
 export type Decoded<T> = { event: T } | 'unknown' | 'invalid';
 
-function failureSideOf(section: string | undefined, field: string | undefined) {
-  return (
-    known(failureSections, section ?? '', undefined) ??
-    known(failureSections, field?.split('.')[0] ?? '', undefined)
-  );
+function adapterFailure(message: string, section?: string): LightingFailure {
+  const side = known(failureSections, section ?? '', undefined);
+  return side
+    ? { kind: 'adapter', message, section: side }
+    : { kind: 'adapter', message };
 }
+
 /**
  * A session's failure as this page reads it, or `null` when malformed
  * (`field` and `section` are text when present). A `section` other than
@@ -329,22 +326,17 @@ function failureSideOf(section: string | undefined, field: string | undefined) {
 function readFailure(value: unknown): LightingFailure | null {
   if (!isLightingFailureReading(value)) return null;
   const { kind, message, field, section } = value;
-  const side = failureSideOf(section, undefined);
   switch (kind) {
     case 'invalid':
-      return field !== undefined
-        ? { kind: 'invalid', message, field }
-        : { kind: 'invalid', message };
+      return field === undefined ? { kind, message } : { kind, message, field };
     case 'adapter':
+      return adapterFailure(message, section);
+    case 'internal':
+      return { kind, message };
+    default: {
+      const side = failureSide(value);
       return side
         ? { kind: 'adapter', message, section: side }
-        : { kind: 'adapter', message };
-    case 'internal':
-      return { kind: 'internal', message };
-    default: {
-      const said = failureSideOf(section, field);
-      return said
-        ? { kind: 'adapter', message, section: said }
         : { kind: 'internal', message };
     }
   }

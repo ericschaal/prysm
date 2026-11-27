@@ -17,6 +17,7 @@ import type {
   Session,
 } from '@prysm/contracts/application';
 import type {
+  LightingFailureReading,
   Settings as SettingsReading,
   State as ApplicationStateReading,
 } from '@prysm/contracts/application-reading';
@@ -183,14 +184,12 @@ function sessionFailure(session: SessionReading): LightingFailure | null {
  * else the section of the setting it names.
  */
 export function failureSide(
-  failure: Failure | LightingFailure,
+  failure: Failure | LightingFailureReading,
 ): FailureSection | null {
-  // Only the sides this page knows: any other value reads as absent.
-  const side = (raw: string | undefined) =>
-    raw === undefined ? null : known(failureSections, raw, null);
+  const { section, field }: LightingFailureReading = failure;
   return (
-    side('section' in failure ? failure.section : undefined) ??
-    side('field' in failure ? failure.field?.split('.')[0] : undefined)
+    known(failureSections, section ?? '', null) ??
+    known(failureSections, field?.split('.')[0] ?? '', null)
   );
 }
 

@@ -55,14 +55,7 @@ type SlimReading =
     })
   | UnknownPhase;
 
-export type State = Omit<
-  Luna.State,
-  'flavor' | 'target' | 'enabled' | 'worker'
-> &
-  (
-    | { flavor: 'full'; target: TargetReading; worker: FullReading }
-    | { flavor: 'slim'; enabled: boolean; worker: SlimReading }
-  );
+export type State = ReturnType<typeof readState>;
 export type Flavor = State['flavor'];
 export type Worker = State['worker'];
 export type SlimLink = Extract<
@@ -332,7 +325,7 @@ function readSlimWorker(worker: Wire.SlimWorker): SlimReading {
 }
 
 /** Map open service values to the states this app can display. */
-export function readState(value: Wire.State): State {
+export function readState(value: Wire.State) {
   const { power, video, preferences, log, unreadable } = value;
   const common = {
     power: known(powers, power, 'unknown'),
@@ -344,13 +337,13 @@ export function readState(value: Wire.State): State {
   return value.flavor === 'full'
     ? {
         ...common,
-        flavor: 'full',
+        flavor: value.flavor,
         target: known(lightingTargets, value.target, 'unknown'),
         worker: readFullWorker(value.worker),
       }
     : {
         ...common,
-        flavor: 'slim',
+        flavor: value.flavor,
         enabled: value.enabled,
         worker: readSlimWorker(value.worker),
       };
