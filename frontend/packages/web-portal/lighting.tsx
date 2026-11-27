@@ -20,18 +20,11 @@ import {
   moodOf,
   pauseOf,
   words,
-  type LightCardFacts,
   type Pause,
 } from './light-card-view';
 
-export interface LightingProps extends LightCardFacts {
-  disabled: boolean;
-  setTarget: (target: LightingTarget) => Promise<unknown>;
-  /** Opens the guided setup; offered while capture or lights are missing. */
-  openSetup: () => void;
-  /** The screen sync picture controls, under the mode tiles. */
-  children?: ReactNode;
-}
+import type { SetupPart } from './adapters';
+import { usePortal } from './portal-context';
 
 /** Starting is mentioned only once it takes longer than this. */
 export const slowStartMs = 1000;
@@ -98,13 +91,15 @@ function effectsLine(effects: string | undefined) {
  * stream, not the click, decides what is shown as on.
  */
 export function LightCard({
-  disabled,
-  setTarget,
-  openSetup,
+  output,
   children,
-  ...facts
-}: LightingProps) {
-  const { target, control, lighting, hasCapture, hasOutput, output } = facts;
+}: {
+  output?: SetupPart;
+  children?: ReactNode;
+}) {
+  const { snapshot, lighting, online, commands, openSetup } = usePortal();
+  const { target, control, settings } = snapshot;
+  const capability = output?.lighting;
   const [pending, setPending] = useState<LightingTarget | null>(null);
   /**
    * The latest refused click, with the lights as they were then: a command
@@ -128,7 +123,7 @@ export function LightCard({
     setPending(next);
     setRefusal(null);
     try {
-      await setTarget(next);
+      await commands.setTarget(next);
     } catch (reason) {
       setRefusal({ failure: failureOf(reason), asked: next, ...at });
     } finally {
@@ -136,7 +131,7 @@ export function LightCard({
     }
   }
 
-  const configured = hasCapture && hasOutput;
+  const configured = !!settings.capture && !!settings.output;
   const mood = moodOf(lighting, configured);
   // Switching modes passes through starting: the light stays up meanwhile.
   const running = mood === 'sync' || mood === 'effects';
@@ -175,8 +170,11 @@ export function LightCard({
     info,
     calm,
     ownEffects,
-  } = lightCardView(facts, { error: refusal, lit, note });
-  const locked = disabled || pending !== null;
+  } = lightCardView(
+    { snapshot, lighting, output },
+    { error: refusal, lit, note },
+  );
+  const locked = !online || pending !== null;
   // Busy: a click on its way, or the lights starting (not yet lit).
   const ring = useLingering(
     pending !== null || (mood === 'starting' && !lit),
@@ -198,7 +196,7 @@ export function LightCard({
     {
       value: 'effects',
       label: effects,
-      line: effectsLine(output?.effects),
+      line: effectsLine(capability?.effects),
       icon: <EffectsIcon />,
     },
   ] as const;
@@ -318,16 +316,16 @@ export function LightCard({
                   ? `${effects.replace(/ effects$/, '')} controls its own effects.`
                   : calm}
               </span>
-              {ownEffects && output?.link ? (
+              {ownEffects && capability?.link ? (
                 <>
                   {' '}
                   <a
                     className="device-link"
-                    href={output.link.href}
+                    href={capability.link.href}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    {output.link.label}
+                    {capability.link.label}
                     <span className="visually-hidden">
                       {' '}
                       (opens in a new tab)
@@ -377,7 +375,7 @@ export function LightCard({
         {configured && on ? (
           <>
             {/* The mode: two option cards, each saying what it does. */}
-            {output?.effects && (
+            {capability?.effects && (
               <div
                 className="modes"
                 role="radiogroup"
@@ -420,7 +418,7 @@ export function LightCard({
                 ))}
               </div>
             )}
-            {output?.effects &&
+            {capability?.effects &&
               tiles.map(({ value }) => {
                 const reason = reasons[value];
                 if (!reason) return null;

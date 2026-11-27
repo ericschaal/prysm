@@ -2,7 +2,7 @@ import type { Processing } from '@prysm/contracts/application-reading';
 import { type AdapterSide } from '@prysm/application-client';
 import { useRef, type ReactNode } from 'react';
 import { useParams } from 'react-router';
-import { ledCount, setupPart } from './adapters';
+import { setupPart } from './adapters';
 import { CalibrateWizard } from './calibrate';
 import { LightCard } from './lighting';
 import { useLiveColors, usePageVisible } from './live-colors';
@@ -112,10 +112,8 @@ export function WaitingPage({
 }
 
 export function HomeRoute() {
-  const portal = usePortal();
+  const { snapshot, host, online, lighting, path } = usePortal();
   const { go } = useNav();
-  const { snapshot, host, online, commands, lighting, path, openSetup } =
-    portal;
   const gridRef = useRef<HTMLDivElement>(null);
   const visible = usePageVisible();
   const syncing = lighting.kind === 'sync';
@@ -130,19 +128,7 @@ export function HomeRoute() {
       <OfflineNotice />
       <SetupNotice />
       <div className="home-grid" ref={gridRef}>
-        <LightCard
-          control={snapshot.control}
-          target={snapshot.target}
-          lighting={lighting}
-          device={snapshot.device}
-          sentLedCount={output?.edges && ledCount(output.edges)}
-          hasCapture={!!capture}
-          hasOutput={!!output}
-          output={output ? (output.lighting ?? {}) : null}
-          disabled={!online}
-          setTarget={commands.setTarget}
-          openSetup={openSetup}
-        >
+        <LightCard output={output}>
           <QuickPicture
             adjustStyle={() => go('style')}
             calibrate={() => go('calibrate')}

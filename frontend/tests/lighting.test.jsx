@@ -313,15 +313,19 @@ test('each situation has one headline and one sentence', () => {
     assert.equal(outputIssueHeadline(issue), 'Not showing screen sync', issue);
 });
 
-const facts = (lighting, change = {}) => ({
-  target: 'screen_sync',
-  control: { remembered: 'screen_sync', external: false, busy: false },
+const facts = (
   lighting,
-  device: {},
-  hasCapture: true,
-  hasOutput: true,
-  output: { effects: 'WLED effects' },
-  ...change,
+  { output = { effects: 'WLED effects' }, ...change } = {},
+) => ({
+  snapshot: {
+    target: 'screen_sync',
+    control: { remembered: 'screen_sync', external: false, busy: false },
+    settings: { capture: { kind: 'device' }, output: { kind: 'wled' } },
+    device: {},
+    ...change,
+  },
+  lighting,
+  output: { lighting: output },
 });
 const memory = (change = {}) => ({
   error: null,
