@@ -50,7 +50,8 @@ macro_rules! native_api {
                     Ok(Self {
                         $($field: {
                             // SAFETY: the symbol has the pinned vendor ABI and its library stays loaded.
-                            *unsafe { library.get::<$ty>($symbol.as_bytes()) }?
+                            let entry = unsafe { library.get::<Option<$ty>>($symbol.as_bytes()) }?;
+                            entry.ok_or(libloading::Error::DlSymUnknown)?
                         },)*
                     })
                 })?)
