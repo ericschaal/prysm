@@ -9,16 +9,14 @@
 //! capture and release must all run on one thread; [`UiCapture`] is not
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
-use crate::Operation;
 use crate::vtcapture::{Error, Plane};
-use prysm_webos_luna_sys::{Loaded, load_once};
+use crate::{Operation, operation::status};
 use std::ffi::c_int;
 use std::fs::File;
 use std::marker::PhantomData;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::Mutex;
 
 /// One HAL GAL surface (`HAL_GAL_SURFACE`).
 #[repr(C)]
@@ -75,53 +73,12 @@ pub(crate) type HalInit = unsafe extern "C" fn() -> c_int;
 pub(crate) type HalCreate = unsafe extern "C" fn(u32, u32, u32, *mut Surface) -> c_int;
 pub(crate) type HalSurfaceCall = unsafe extern "C" fn(*mut Surface) -> c_int;
 
-/// The four HAL GAL entry points. Lives for the whole process.
-pub(crate) struct HalApi {
-    pub init: HalInit,
-    pub create: HalCreate,
-    pub destroy: HalSurfaceCall,
-    pub capture: HalSurfaceCall,
-}
-
-/// Load `libhalgal` on first use and keep it for the life of the process.
-fn hal() -> Result<&'static HalApi, Error> {
-    static HAL: Mutex<Loaded<HalApi>> = Mutex::new(Loaded::Nothing);
-    let names = ["libhalgal.so.1", "libhalgal.so"];
-    // Never unloaded, not even when a symbol is missing: unloading libhalgal
-    // leaks file descriptors. A retry reuses the loaded library.
-    let api = load_once(&HAL, &names, |library| {
-        let symbol = |source| prysm_webos_luna_sys::Error::Load {
-            library: names.join(" or "),
-            source,
-        };
-        // SAFETY: the signatures match halgal.h. The library is never
-        // unloaded, so the function pointers stay valid for the life of the
-        // process.
-        unsafe {
-            Ok(HalApi {
-                init: *library.get::<HalInit>(b"HAL_GAL_Init\0").map_err(symbol)?,
-                create: *library
-                    .get::<HalCreate>(b"HAL_GAL_CreateSurface\0")
-                    .map_err(symbol)?,
-                destroy: *library
-                    .get::<HalSurfaceCall>(b"HAL_GAL_DestroySurface\0")
-                    .map_err(symbol)?,
-                capture: *library
-                    .get::<HalSurfaceCall>(b"HAL_GAL_CaptureFrameBuffer\0")
-                    .map_err(symbol)?,
-            })
-        }
-    })?;
-    Ok(api)
-}
-
-fn status(code: c_int, operation: Operation) -> Result<(), Error> {
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(Error::Status { operation, code })
-    }
-}
+native_api!(HalApi, ["libhalgal.so.1", "libhalgal.so"], {
+    init: HalInit = Operation::HalInit.as_str(),
+    create: HalCreate = Operation::HalCreateSurface.as_str(),
+    destroy: HalSurfaceCall = Operation::HalDestroySurface.as_str(),
+    capture: HalSurfaceCall = Operation::HalCaptureFrameBuffer.as_str(),
+});
 
 /// The graphics plane as captured: premultiplied BGRA rows, `pitch` bytes
 /// apart, borrowed from the uncached `/dev/gfx` mapping until the next call.
@@ -183,7 +140,6 @@ enum Stage {
 /// One open graphics-plane capture surface; see the module documentation.
 pub struct UiCapture {
     api: &'static HalApi,
-    /// Boxed: HAL keeps no pointer to it, but a stable address costs nothing.
     surface: Box<Surface>,
     stage: Stage,
     /// Not `Send`: HAL GAL binds the tap to the thread that opened it.
@@ -201,10 +157,10 @@ impl UiCapture {
     /// `/dev/gfx` cannot be opened or mapped, a nonzero HAL status or an
     /// unexpected surface. Nothing stays allocated on error.
     pub fn open(width: u16, height: u16) -> Result<Self, Error> {
-        Self::open_with(hal()?, Path::new(DEVICE), width, height)
+        Self::open_with(HalApi::load()?, Path::new(DEVICE), width, height)
     }
 
-    pub(crate) fn open_with(
+    fn open_with(
         api: &'static HalApi,
         device: &Path,
         width: u16,

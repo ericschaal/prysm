@@ -243,7 +243,6 @@ mod tests {
             .with_primaries([PrimaryAdjustment::default(); 3])
             .unwrap();
         assert_eq!(zero, ColorCorrection::default());
-        // With white balance only, the matrix is the gains' diagonal.
         let warm = ColorCorrection::new(40, -20, 0).unwrap();
         let same = warm
             .with_primaries([PrimaryAdjustment::default(); 3])
@@ -278,10 +277,6 @@ mod tests {
 
     #[test]
     fn a_primary_moves_only_its_own_column() {
-        // Red's controls change what pure red lights. Pure green and pure blue
-        // stay on their own channel; only the row normalisation scales them,
-        // by 1 / (1 + red's mix into that channel), so they may dim, never
-        // change colour.
         for index in 0..3 {
             for (hue, strength) in [(100, 0), (-60, 0), (0, -100), (0, 100), (45, -70)] {
                 let corrected = primary(index, hue, strength);
@@ -302,16 +297,12 @@ mod tests {
     #[test]
     fn each_control_turns_or_calms_its_primary_the_way_it_says() {
         let [red, green, blue] = PRIMARIES.map(channels);
-        // Positive hue mixes in the next primary: red more orange (green),
-        // green more turquoise (blue), blue more purple (red).
         let out = channels(primary(0, 50, 0).apply(PRIMARIES[0]));
         assert!(out[1] > 0.0 && out[2] == 0.0 && out[0] == red[0]);
         let out = channels(primary(1, 50, 0).apply(PRIMARIES[1]));
         assert!(out[2] > 0.0 && out[0] == 0.0 && out[1] == green[1]);
         let out = channels(primary(2, 50, 0).apply(PRIMARIES[2]));
         assert!(out[0] > 0.0 && out[1] == 0.0 && out[2] == blue[2]);
-        // Negative hue mixes in the previous one: red more pink (blue),
-        // green more yellow (red), blue more turquoise (green).
         let out = channels(primary(0, -50, 0).apply(PRIMARIES[0]));
         assert!(out[2] > 0.0 && out[1] == 0.0);
         let out = channels(primary(1, -50, 0).apply(PRIMARIES[1]));
@@ -319,17 +310,14 @@ mod tests {
         let out = channels(primary(2, -50, 0).apply(PRIMARIES[2]));
         assert!(out[1] > 0.0 && out[0] == 0.0);
 
-        // Softer mixes both others in equally; stronger takes them out.
         let moderate = LinearColor::new(0.6, 0.2, 0.2);
         let softer = primary(0, 0, -50).apply(moderate);
         assert!(softer.g > moderate.g && (softer.g - softer.b).abs() < 1e-6);
         let stronger = primary(0, 0, 50).apply(moderate);
         assert!(stronger.g < moderate.g && (stronger.g - stronger.b).abs() < 1e-6);
-        // The most a primary can be calmed still leaves it clearly itself.
         let calmest = primary(0, 0, -100).apply(PRIMARIES[0]);
         assert!(calmest.r == 1.0 && calmest.g > 0.3 && calmest.g < 0.5);
 
-        // Fine steps near zero, larger toward the ends.
         let mix = |control| primary(0, control, 0).apply(PRIMARIES[0]).g;
         assert!(mix(1) > 0.0 && mix(1) < 1e-4);
         assert!(mix(10) < 0.01 && mix(100) > 0.3);

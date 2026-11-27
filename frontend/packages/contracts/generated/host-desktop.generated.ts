@@ -65,18 +65,18 @@ export interface components {
             blue: components["schemas"]["PrimaryControls"];
             green: components["schemas"]["PrimaryControls"];
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive lightens midtones, negative darkens them.
              */
             midtones: number;
             red: components["schemas"]["PrimaryControls"];
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive adds magenta, negative adds green.
              */
             tint: number;
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive warms, negative cools.
              */
             warmth: number;
@@ -364,6 +364,18 @@ export interface components {
             top?: number;
         };
         /**
+         * @description Intent and observed power have separate lifetimes. An external live stream
+         *     leaves both mode buttons unselected until the user requests a mode.
+         */
+        LightingControl: {
+            busy: boolean;
+            external: boolean;
+            power?: components["schemas"]["Power"];
+            remembered: components["schemas"]["LightingMode"];
+            /** @description A requested mode is waiting for a prerequisite that can recover. */
+            waiting?: components["schemas"]["WaitingFor"];
+        };
+        /**
          * @description Why the lighting is as it is: the failure a session state carries. An
          *     adapter failure carries its cause chain (`context: cause: cause`), since
          *     the cause is what names the problem (a device's error, a remote sender's
@@ -389,6 +401,11 @@ export interface components {
             kind: "internal";
             message: string;
         };
+        /**
+         * @description The selected mode restored by the Power button.
+         * @enum {string}
+         */
+        LightingMode: "screen_sync" | "effects";
         /**
          * @description What the user wants the LEDs to do.
          * @enum {string}
@@ -453,6 +470,12 @@ export interface components {
          * @enum {string}
          */
         Picture: "arriving" | "quiet" | "refused";
+        /**
+         * @description Physical power as reported by an output. An unknown value is represented by
+         *     the absence of an observation.
+         * @enum {string}
+         */
+        Power: "off" | "on";
         /** @description One server-sent event of the preview stream. */
         PreviewEvent: (components["schemas"]["PreviewFrame"] & {
             /** @enum {string} */
@@ -506,13 +529,13 @@ export interface components {
         /** @description One picture primary's controls, each -100 to 100; white never moves. */
         PrimaryControls: {
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive turns toward the next primary in red, green, blue order,
              *     negative toward the previous one.
              */
             hue: number;
             /**
-             * Format: int32
+             * Format: int16
              * @description Negative makes the colour softer, positive stronger.
              */
             strength: number;
@@ -521,7 +544,7 @@ export interface components {
         Processing: {
             /** @description The `id` of the applied calibration; absent applies no correction. */
             active_calibration?: string;
-            /** Format: int32 */
+            /** Format: uint8 */
             brightness_percent: number;
             /** @description Saved color corrections; ids are unique. */
             calibrations?: components["schemas"]["Calibration"][];
@@ -532,7 +555,7 @@ export interface components {
             custom_style?: components["schemas"]["StyleValues"];
             remove_black_bars: boolean;
             /**
-             * Format: int32
+             * Format: uint16
              * @description Samples per 1000 px of edge, measured on the picture scaled down to
              *     640x360: the same value gives the same samples at any capture size.
              *     At most one sample per sampling-grid cell along an edge (128 along the
@@ -672,14 +695,11 @@ export interface components {
              *     absent while not calibrating. Never saved.
              */
             calibration?: components["schemas"]["CalibrationPattern"];
+            control: components["schemas"]["LightingControl"];
             /**
-             * @description What the lights say about themselves, from the output's own checks
-             *     (about once a second). Empty while no session holds the output: no
-             *     session, or one that has no frame yet or released the output after 3 s
-             *     without video; `session.state` and `input.picture` say which. While
-             *     the lights are waited for, `issue` is `unreachable` alone: a session
-             *     waits for lights that did not answer its open, or the session is
-             *     `unanswered`.
+             * @description The output's latest report. While the requested mode waits for the
+             *     output, `issue` is `unreachable`. Read `control.waiting` for the
+             *     current prerequisite and `input` for frame delivery.
              */
             device: components["schemas"]["DeviceReport"];
             /**
@@ -727,25 +747,25 @@ export interface components {
              */
             brightness_ramp_seconds: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description How much each light keeps the colour next to it, taking less from the
              *     rest of the picture; 0 is the plain average.
              */
             color_focus_percent: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description How much of a scene cut the lights take at once; 0 eases a cut in
              *     like any other change.
              */
             cut_response_percent: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description The least luminance the lights keep, as a neutral white glow, in
              *     percent of full light; 0 lets them go fully dark.
              */
             dark_floor_percent: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
              */
             saturation_boost_percent: number;
@@ -755,7 +775,7 @@ export interface components {
              */
             smoothing_seconds: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description Edge depth: how far into the picture each light looks, in percent of
              *     the picture's height.
              */
@@ -765,6 +785,11 @@ export interface components {
         TargetRequest: {
             target: components["schemas"]["LightingTarget"];
         };
+        /**
+         * @description The required adapter holding up the current request.
+         * @enum {string}
+         */
+        WaitingFor: "capture" | "output";
         /**
          * @description Where the device is, how many LEDs each screen edge has, and whether
          *     dim colours are dithered (on unless `false`):
@@ -823,7 +848,9 @@ export type Latency = components['schemas']['Latency'];
 export type LedColor = components['schemas']['LedColor'];
 export type LedColors = components['schemas']['LedColors'];
 export type LedCounts = components['schemas']['LedCounts'];
+export type LightingControl = components['schemas']['LightingControl'];
 export type LightingFailure = components['schemas']['LightingFailure'];
+export type LightingMode = components['schemas']['LightingMode'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type Mode = components['schemas']['Mode'];
 export type Modes = components['schemas']['Modes'];
@@ -832,6 +859,7 @@ export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];
 export type Picture = components['schemas']['Picture'];
+export type Power = components['schemas']['Power'];
 export type PreviewEvent = components['schemas']['PreviewEvent'];
 export type PreviewFrame = components['schemas']['PreviewFrame'];
 export type PreviewViewport = components['schemas']['PreviewViewport'];
@@ -848,6 +876,7 @@ export type StreamEncoding = components['schemas']['StreamEncoding'];
 export type Style = components['schemas']['Style'];
 export type StyleValues = components['schemas']['StyleValues'];
 export type TargetRequest = components['schemas']['TargetRequest'];
+export type WaitingFor = components['schemas']['WaitingFor'];
 export type WledSettings = components['schemas']['WledSettings'];
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

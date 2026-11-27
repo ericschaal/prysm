@@ -9,7 +9,7 @@
 //! levels while a pattern switches smoothing off.
 use prysm_ports::{
     AdapterSettings, Calibration, CalibrationPattern, CorrectionControls, Error, LightingTarget,
-    Pattern, Processing, Registry, Settings, Style, StyleValues,
+    Pattern, Processing, Registry, SessionState, Settings, Style, StyleValues,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -125,7 +125,6 @@ async fn patterns_need_screen_sync() {
                 .unwrap_err();
             assert!(matches!(error, Error::NeedsScreenSync), "{error:?}");
             assert_eq!(calibration(&handle), None);
-            // Clearing is always accepted.
             handle.set_calibration(None).await.unwrap();
         }
         assert_eq!(log.count("source.open:a"), 0, "a pattern starts nothing");
@@ -177,21 +176,18 @@ async fn uncorrected_shows_at_once_without_the_calibration_and_clearing_restores
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, "cool", cool).await;
 
-        // Uncorrected: no calibration and no smoothing, so exactly neutral at once.
         handle
             .set_calibration(pattern(Pattern::Gray192, true))
             .await
             .unwrap();
         wait_for_cast(&handle, "neutral", neutral).await;
 
-        // Corrected again: the calibration is back.
         handle
             .set_calibration(pattern(Pattern::Gray192, false))
             .await
             .unwrap();
         wait_for_cast(&handle, "cool", cool).await;
 
-        // Uncorrected, then cleared: the calibration and its smoothing return.
         handle
             .set_calibration(pattern(Pattern::Gray192, true))
             .await
@@ -246,8 +242,6 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
         );
 
         handle.set_calibration(None).await.unwrap();
-        // The restarted smoother passes its first frame unblended; blended
-        // levels follow once the source blinks (`within` bounds the wait).
         while green_levels(&handle).await <= 2 {}
         assert_eq!(handle.snapshot().borrow().settings, saved);
         assert_eq!(log.count("source.open:a"), 1);
@@ -264,10 +258,14 @@ async fn leaving_screen_sync_ending_and_shutdown_clear_the_pattern() {
         for target in [LightingTarget::Off, LightingTarget::Effects] {
             handle.set_target(LightingTarget::ScreenSync).await.unwrap();
             handle
+                .snapshot()
+                .wait_for(|s| matches!(s.session, SessionState::ScreenSync))
+                .await
+                .unwrap();
+            handle
                 .set_calibration(pattern(Pattern::Coast, false))
                 .await
                 .unwrap();
-            // Asking for screen sync again keeps it.
             handle.set_target(LightingTarget::ScreenSync).await.unwrap();
             assert_eq!(calibration(&handle), pattern(Pattern::Coast, false));
             handle.set_target(target).await.unwrap();
@@ -281,7 +279,6 @@ async fn leaving_screen_sync_ending_and_shutdown_clear_the_pattern() {
         engine.shutdown().await.unwrap();
         assert_eq!(calibration(&handle), None, "cleared at shutdown");
 
-        // A source that ends turns lighting off, and with it the pattern.
         let store = MemoryStore::with(settings(None, &source(128, Some(500))));
         let (handle, engine, _) = start(&store).await;
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
@@ -321,7 +318,6 @@ async fn a_pattern_nobody_sets_again_expires() {
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert_eq!(calibration(&handle), pattern(Pattern::Blue, false));
 
-        // Setting it again, even unchanged, restarts the timeout.
         handle
             .set_calibration(pattern(Pattern::Blue, false))
             .await

@@ -5,58 +5,36 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import type { TargetReading } from '@prysm/application-client';
-import type { Calibration } from '@prysm/contracts/application';
 import {
   screenOf,
   screens,
   type Calibrating,
-  type Closing,
   type Screen,
-  type WizardPhase,
 } from './calibrate-wizard';
 import {
   fixLabels,
-  hueGuidance,
   needsTv,
   patternLabels,
   primaryOf,
   resetOf,
   sectionOrder,
   sections,
-  strengthGuidance,
   tvInstruction,
-  whiteEnds,
-  whiteGuidance,
   wordsOf,
 } from './calibrate-copy';
 import { nameProblem } from './checks';
-import { RangeField, SelectField, TextField } from './fields';
-import { FieldScopeProvider, focusField, type FieldScope } from './form';
-import {
-  correctionLimits,
-  calibrationLimits,
-  primaryLimits,
-  endsLabel,
-  signed,
-  strengthEnds,
-  noCorrection,
-  type Primary,
-} from './calibration-model';
-import {
-  useCalibration,
-  type CalibrateProps,
-  type CalibrationView,
-} from './use-calibration';
+import { WhiteSliders, PrimarySliders } from './correction-sliders';
+import { useNav } from './portal-context';
+import { SelectField, TextField } from './fields';
+import { FieldScopeProvider, focusField } from './form';
+import { calibrationLimits, noCorrection } from './calibration-model';
+import { useCalibration, type CalibrationView } from './use-calibration';
 
-/** The page each phase shows: starting stays on the start, ending on the last screen. */
-const pageOf: Record<WizardPhase['kind'], 'start' | 'calibrating' | 'done'> = {
-  start: 'start',
-  starting: 'start',
-  calibrating: 'calibrating',
-  ending: 'calibrating',
-  done: 'done',
-};
+interface ScreenProps {
+  wizard: CalibrationView;
+  heading: (title: string) => ReactNode;
+  notices: ReactNode;
+}
 
 /**
  * The Calibrate page, used on a phone while the TV shows patterns: a guided
@@ -66,16 +44,15 @@ const pageOf: Record<WizardPhase['kind'], 'start' | 'calibrating' | 'done'> = {
  * deletes it and makes the previous calibration active again. The work is
  * {@link useCalibration}'s; this renders it.
  */
-export function CalibrateWizard(props: CalibrateProps) {
-  const { target, disabled, leave } = props;
-  const wizard = useCalibration(props);
-  const { state, live, view, ended } = wizard;
-  const { phase, problem } = state;
+export function CalibrateWizard() {
+  const { backToOpener: leave } = useNav();
+  const wizard = useCalibration(leave);
+  const { view, problem, failure, ended } = wizard;
   const headingRef = useRef<HTMLHeadingElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const headingId = useId();
-  const page = pageOf[phase.kind];
-  const screen = view?.place.screen ?? 0;
+  const page = view.kind === 'starting' ? 'start' : view.kind;
+  const screen = view.kind === 'calibrating' ? view.place.screen : 0;
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
     // Each screen opens at its top, where its progress and question are,
@@ -90,9 +67,9 @@ export function CalibrateWizard(props: CalibrateProps) {
           {problem}
         </p>
       ) : null}
-      {live.failure ? (
+      {failure ? (
         <p className="notice error" role="alert">
-          {live.failure}
+          {failure}
         </p>
       ) : null}
     </>
@@ -109,16 +86,17 @@ export function CalibrateWizard(props: CalibrateProps) {
     </h2>
   );
 
+  const screenProps = { wizard, heading, notices };
   let content: ReactNode;
-  if (phase.kind === 'done')
+  if (view.kind === 'done')
     content = (
       <>
         <div className="card-heading">
           <p className="eyebrow">Calibrate colours</p>
         </div>
-        {heading(phase.title)}
+        {heading(view.title)}
         <p className="intro" role="status">
-          {phase.message}
+          {view.message}
         </p>
         <div className="actions">
           <button type="button" className="primary" onClick={leave}>
@@ -127,33 +105,14 @@ export function CalibrateWizard(props: CalibrateProps) {
         </div>
       </>
     );
-  else if (phase.kind === 'start' || phase.kind === 'starting')
-    content = (
-      <StartScreen
-        heading={heading}
-        notices={notices}
-        calibrations={wizard.calibrations}
-        from={phase.from}
-        choose={wizard.choose}
-        scope={live.scope}
-        target={target}
-        locked={disabled || phase.kind === 'starting'}
-        starting={phase.kind === 'starting'}
-        start={() => void wizard.start()}
-        leave={leave}
-      />
-    );
+  else if (view.kind === 'start' || view.kind === 'starting')
+    content = <StartScreen {...screenProps} phase={view} leave={leave} />;
   else
     content = (
       <StepScreen
-        wizard={wizard}
-        view={phase.kind === 'ending' ? phase.last : phase}
-        heading={heading}
-        notices={notices}
-        target={target}
-        disabled={disabled}
+        {...screenProps}
+        view={view}
         finish={() => {
-          // The field says what is wrong, in its own note.
           if (wizard.nameProblem)
             focusField(sectionRef.current, 'calibration.name');
           else void wizard.finish();
@@ -173,30 +132,17 @@ export function CalibrateWizard(props: CalibrateProps) {
 
 /** Before the start: what to copy, and why the start may not work yet. */
 function StartScreen({
+  wizard,
+  phase,
   heading,
   notices,
-  calibrations,
-  from,
-  choose,
-  scope,
-  target,
-  locked,
-  starting,
-  start,
   leave,
-}: {
-  heading: (title: string) => ReactNode;
-  notices: ReactNode;
-  calibrations: readonly Calibration[];
-  from: string;
-  choose: (from: string) => void;
-  scope: FieldScope;
-  target: TargetReading;
-  locked: boolean;
-  starting: boolean;
-  start: () => void;
+}: ScreenProps & {
+  phase: Extract<CalibrationView['view'], { kind: 'start' | 'starting' }>;
   leave: () => void;
 }) {
+  const { calibrations, scope, target } = wizard;
+  const starting = phase.kind === 'starting';
   const full = calibrations.length >= calibrationLimits.count;
   return (
     <>
@@ -238,7 +184,7 @@ function StartScreen({
             path="calibration.from"
             label="Start from"
             help="Calibrating works on a copy; the original stays as it is."
-            value={from}
+            value={phase.from}
             options={[
               { value: '', label: 'New calibration' },
               ...calibrations.map((calibration) => ({
@@ -246,7 +192,7 @@ function StartScreen({
                 label: calibration.name,
               })),
             ]}
-            onChange={choose}
+            onChange={wizard.choose}
           />
         ) : null}
       </FieldScopeProvider>
@@ -255,8 +201,10 @@ function StartScreen({
         <button
           type="button"
           className="primary"
-          disabled={locked || full || target !== 'screen_sync'}
-          onClick={start}
+          disabled={
+            scope.disabled || starting || full || target !== 'screen_sync'
+          }
+          onClick={() => void wizard.start()}
         >
           {starting ? 'Starting…' : 'Start'}
         </button>
@@ -265,27 +213,16 @@ function StartScreen({
   );
 }
 
-/**
- * The top line: where you are, and Cancel, quiet like Setup's Leave setup.
- * Cancel discards work, so with changes it first asks in the same place;
- * nothing below moves.
- */
 function StepHeading({
-  confirming,
-  closing,
-  disabled,
-  cancel,
-  keep,
-  discard,
+  wizard,
+  view,
 }: {
-  confirming: boolean;
-  /** Finish, Cancel or Leave is under way. */
-  closing: Closing | null;
-  disabled: boolean;
-  cancel: () => void;
-  keep: () => void;
-  discard: () => void;
+  wizard: CalibrationView;
+  view: Calibrating;
 }) {
+  const { confirming, closing } = view;
+  const { cancel, keep } = wizard;
+  const { disabled } = wizard.scope;
   const questionId = useId();
   const keepRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -323,7 +260,7 @@ function StepHeading({
             className="quiet danger"
             disabled={disabled || closing !== null}
             aria-busy={closing === 'discard' || undefined}
-            onClick={discard}
+            onClick={() => void wizard.discard()}
             onKeyDown={escape}
           >
             Discard
@@ -374,25 +311,19 @@ function StepProgress({ current }: { current: Screen }) {
 /** The TV no longer shows the patterns: the draft is kept, Resume or Leave. */
 function EndedNotice({
   wizard,
-  closing,
+  view,
   heading,
   notices,
-  target,
-  disabled,
-}: {
-  wizard: CalibrationView;
-  closing: Closing | null;
-  heading: (title: string) => ReactNode;
-  notices: ReactNode;
-  target: TargetReading;
-  disabled: boolean;
-}) {
+}: ScreenProps & { view: Calibrating }) {
+  const { closing } = view;
+  const { target } = wizard;
+  const { disabled } = wizard.scope;
   return (
     <>
       {heading('Calibration ended')}
       <p className="notice warning" role="alert">
         The TV no longer shows the patterns. Your changes so far are kept in “
-        {wizard.draft ? wizard.draft.name : 'your calibration'}”.
+        {wizard.editor?.calibration.name ?? 'your calibration'}”.
         {target !== 'screen_sync' ? ` ${tvInstruction}` : ''}
       </p>
       {notices}
@@ -418,92 +349,31 @@ function EndedNotice({
   );
 }
 
-/** The screen's sliders, its links back to what a check is made of, and the name. */
 function StepControls({
   wizard,
   view,
   current,
-  disabled,
 }: {
   wizard: CalibrationView;
   view: Calibrating;
   current: Screen;
-  disabled: boolean;
 }) {
-  const { draft, live, path } = wizard;
+  const { editor, scope } = wizard;
+  const { disabled } = scope;
   const fixesId = useId();
-  if (!draft)
+  if (!editor)
     return (
       <p className="notice warning">
         This calibration was deleted elsewhere. Cancel to finish.
       </p>
     );
-  const values = draft.correction;
-  const range = (
-    control: string,
-    ends: readonly [string, string],
-    help: string,
-    value: number,
-    onChange: (value: number) => void,
-    limits: { min: number; max: number; step: number },
-  ) => (
-    <RangeField
-      key={control}
-      className={`slider-${control.replace('.', '-')}`}
-      path={`${path}.${control}`}
-      label={endsLabel(ends)}
-      help={help}
-      ends={ends}
-      value={value}
-      onChange={onChange}
-      onPress={live.slider.press}
-      onRelease={live.slider.release}
-      format={signed}
-      {...limits}
-    />
-  );
-  const slider = (control: keyof typeof whiteEnds) =>
-    range(
-      control,
-      whiteEnds[control],
-      whiteGuidance[control],
-      values[control],
-      (value) => wizard.correct({ [control]: value }, control),
-      correctionLimits[control],
-    );
+  const { calibration: draft, sliders } = editor;
   const primary = primaryOf(current.section);
-  const primarySlider = (
-    name: Primary,
-    control: keyof typeof primaryLimits,
-    ends: readonly [string, string],
-  ) =>
-    range(
-      `${name}.${control}`,
-      ends,
-      control === 'hue' ? hueGuidance(ends) : strengthGuidance,
-      values[name][control],
-      (value) =>
-        wizard.correct(
-          { [name]: { ...values[name], [control]: value } },
-          `${name}.${control}`,
-        ),
-      primaryLimits[control],
-    );
   return (
-    <FieldScopeProvider value={live.scope}>
-      <div key={live.generation} className="calibrate-controls">
-        {current.section === 'white' ? (
-          <>
-            {slider('warmth')}
-            {slider('tint')}
-          </>
-        ) : null}
-        {primary ? (
-          <>
-            {primarySlider(primary.name, 'hue', primary.hue)}
-            {primarySlider(primary.name, 'strength', strengthEnds)}
-          </>
-        ) : null}
+    <FieldScopeProvider value={scope}>
+      <div key={wizard.generation} className="calibrate-controls">
+        {current.section === 'white' && <WhiteSliders {...sliders} guided />}
+        {primary && <PrimarySliders {...sliders} primary={primary} guided />}
         {current.fixes ? (
           <div
             className="calibrate-fixes"
@@ -545,49 +415,32 @@ function StepScreen({
   view,
   heading,
   notices,
-  target,
-  disabled,
   finish,
-}: {
-  wizard: CalibrationView;
-  /** The calibrating screen, also while calibration is being ended. */
+}: ScreenProps & {
   view: Calibrating;
-  heading: (title: string) => ReactNode;
-  notices: ReactNode;
-  target: TargetReading;
-  /** The portal cannot take commands now. */
-  disabled: boolean;
   finish: () => void;
 }) {
-  const { draft } = wizard;
+  const { editor } = wizard;
+  const { disabled } = wizard.scope;
   const { place, closing } = view;
   const { screen, returnTo, uncorrected } = place;
   const current = screens[screen] ?? screens[0]!;
   const words = wordsOf(current);
   const reset = resetOf(
     current.section,
-    draft ? draft.correction : noCorrection,
+    editor?.calibration.correction ?? noCorrection,
   );
   const review = current.section === 'review';
   return (
     <>
-      <StepHeading
-        confirming={view.confirming}
-        closing={closing}
-        disabled={disabled}
-        cancel={wizard.cancel}
-        keep={wizard.keep}
-        discard={() => void wizard.discard()}
-      />
+      <StepHeading wizard={wizard} view={view} />
       <StepProgress current={current} />
       {wizard.ended ? (
         <EndedNotice
           wizard={wizard}
-          closing={closing}
+          view={view}
           heading={heading}
           notices={notices}
-          target={target}
-          disabled={disabled}
         />
       ) : (
         <>
@@ -602,12 +455,7 @@ function StepScreen({
             On your TV: {patternLabels[current.pattern]}
           </p>
           <p className="intro">{words.lead}</p>
-          <StepControls
-            wizard={wizard}
-            view={view}
-            current={current}
-            disabled={disabled}
-          />
+          <StepControls wizard={wizard} view={view} current={current} />
           {/* Compare and Reset in one row: used often, always in the same place. */}
           <div className="calibrate-tools">
             <button
@@ -619,12 +467,12 @@ function StepScreen({
             >
               Show without correction
             </button>
-            {reset && draft ? (
+            {reset && editor ? (
               <button
                 type="button"
                 className="quiet"
                 disabled={disabled || !reset.changed}
-                onClick={() => wizard.correct(reset.to, reset.control)}
+                onClick={() => editor.sliders.change(reset.to, reset.control)}
               >
                 Reset
               </button>
@@ -645,7 +493,7 @@ function StepScreen({
               <button
                 type="button"
                 className="primary"
-                disabled={disabled || !draft || closing !== null}
+                disabled={disabled || !editor || closing !== null}
                 aria-busy={closing === 'finish' || undefined}
                 onClick={finish}
               >

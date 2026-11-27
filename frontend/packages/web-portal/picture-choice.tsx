@@ -1,8 +1,12 @@
 import { use, useEffect, useId, useRef, useState } from 'react';
-import { describePicture, pictureFacts, type Picture } from './adapters';
+import {
+  describePicture,
+  pictureSize,
+  savedPicture,
+  type Picture,
+} from './adapters';
 import {
   delivers,
-  offeredPresets,
   sameSize,
   type ModesState,
   type Offered,
@@ -12,26 +16,15 @@ import {
   customPicture,
   picturePaths,
   picturePresets,
-  presetOrder,
+  presetTargets,
   type PicturePreset,
 } from './picture-presets';
 import { RowChoice } from './rows';
 
 /**
- * How much work capture costs, as one choice of presets in the rows
- * pattern, each at the size and rate the source delivers for it; only the
- * ticked row says what it means. Nothing new is stored: the ticked row
- * follows from the size and rate. One more ticked row shows a size and rate
- * no preset sets, until a preset replaces it. Until the modes are known the
- * rows are locked on the current choice. Without an answer, the line under
- * them says why (`unreachable` while the hardware is out of reach) and
- * offers Try again; once that brings the modes, the rows take the focus
- * the button leaves, unless the user has moved it elsewhere meanwhile. A
- * preset ticked earlier follows to this source's size for it; else a size
- * and rate the source cannot deliver moves to the first preset. Either way,
- * what could not be delivered is said in the line under the rows. Nothing
- * is drawn when `nothingOffered`: the field that selects the source says
- * why.
+ * Choose a size and rate from the source's advertised modes. A remembered
+ * preset follows the new source. An unsupported custom size falls back to
+ * the first offered preset.
  */
 export function PictureChoice<V extends Picture>({
   value,
@@ -59,46 +52,34 @@ export function PictureChoice<V extends Picture>({
   const legendId = useId();
   const lineId = useId();
   const groupRef = useRef<HTMLFieldSetElement>(null);
-  /**
-   * Try again was pressed with the focus on `from` (the button, or where
-   * a browser that does not focus buttons left it): the rows take it
-   * unless the user moved it since.
-   */
+  /** Where focus was when the user requested another probe. */
   const askedAgainRef = useRef<{ from: Element | null } | null>(null);
-  const current = {
-    width: value.width ?? defaults.width,
-    height: value.height ?? defaults.height,
-    fps: value.fps ?? defaults.fps,
-  };
-  const known = modes.state === 'known' ? modes.modes : null;
-  const offered: Offered[] = known
-    ? offeredPresets(known)
-    : presetOrder.map((preset) => ({ preset, ...picturePresets[preset] }));
+  const current = savedPicture(value, defaults);
+  const known = modes.state === 'known' ? modes : null;
+  const offered = known?.offered ?? presetTargets;
   const ticked = offered.find((each) => sameSize(each, current));
   /** The preset last ticked while the modes were known. */
   const [intent, setIntent] = useState<PicturePreset | null>(null);
   /** Said once a size and rate the source cannot deliver was replaced. */
   const [moved, setMoved] = useState<string | null>(null);
   if (known && ticked && ticked.preset !== intent) setIntent(ticked.preset);
-  // A line about other modes says nothing about these.
   if (!known && moved !== null) setMoved(null);
-  const followed = offered.find((each) => each.preset === intent);
   let move: Offered | undefined;
-  if (known && !ticked && !scope.disabled)
-    move = followed ?? (delivers(known, current) ? undefined : offered[0]);
-  // Said whenever what was set cannot be delivered; following a preset to
-  // a deliverable size is not.
-  if (known && move && !delivers(known, current)) {
-    const line = `${source} doesn’t offer ${describePicture(current.width, current.height, current.fps)}. ${picturePresets[move.preset].label} is chosen.`;
-    if (moved !== line) setMoved(line);
+  if (known && !ticked && !scope.disabled) {
+    const supported = delivers(known.modes, current);
+    move =
+      offered.find((each) => each.preset === intent) ??
+      (supported ? undefined : offered[0]);
+    if (move && !supported) {
+      const line = `${source} doesn’t offer ${describePicture(current.width, current.height, current.fps)}. ${picturePresets[move.preset].label} is chosen.`;
+      if (moved !== line) setMoved(line);
+    }
   }
   useEffect(() => {
     if (!move) return;
     const { width, height, fps } = move;
     onChange({ ...value, width, height, fps });
   }, [move, value, onChange]);
-  // Asking again keeps the last answer: the next one is its answer. The
-  // button goes with a known one; focus moved elsewhere meanwhile stays.
   useEffect(() => {
     const asked = askedAgainRef.current;
     if (!asked) return;
@@ -126,10 +107,6 @@ export function PictureChoice<V extends Picture>({
     setMoved(null);
     onChange({ ...value, width, height, fps });
   }
-  /**
-   * What a ticked preset means: its trade, or, where the source has nothing
-   * as small as the preset aims for, that this is its smallest.
-   */
   const aboutOf = (each: Offered) => {
     const at = picturePresets[each.preset];
     const object = source.charAt(0).toLowerCase() + source.slice(1);
@@ -137,10 +114,8 @@ export function PictureChoice<V extends Picture>({
       ? at.about
       : `The smallest size ${object} offers at ${each.fps} fps.`;
   };
-  const facts = (size: Required<Picture>) =>
-    pictureFacts(size, size)
-      .map((fact) => fact.value)
-      .join(' · ');
+  const facts = ({ width, height, fps }: Required<Picture>) =>
+    `${pictureSize(width, height)} · ${fps} fps`;
   return (
     <fieldset
       ref={groupRef}

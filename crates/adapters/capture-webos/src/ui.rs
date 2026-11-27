@@ -47,7 +47,6 @@ impl Nv12Converter {
         for (pair, uv) in chroma.chunks_exact_mut(width).enumerate() {
             self.sums.fill([0; 3]);
             for y in [pair * 2, pair * 2 + 1] {
-                // The one read of this row of the mapping.
                 read_row(y, &mut self.row)?;
                 let luma = &mut luma[y * width..(y + 1) * width];
                 for (x, (pixel, luma)) in self.row.as_chunks::<4>().0.iter().zip(luma).enumerate() {
@@ -90,7 +89,6 @@ mod tests {
 
     #[test]
     fn known_colours_in_limited_range_bt709() {
-        // Reference: BT.709 limited range, rounded.
         assert_eq!(solid([0, 0, 0, 255]), [16, 128, 128], "black");
         assert_eq!(solid([255, 255, 255, 255]), [235, 128, 128], "white");
         assert_eq!(solid([0, 0, 255, 255]), [63, 102, 240], "red");
@@ -104,7 +102,6 @@ mod tests {
         assert_eq!(solid([0, 0, 0, 0]), [16, 128, 128], "transparent is black");
         // 50 % white, premultiplied, equals opaque mid grey over black.
         assert_eq!(solid([128, 128, 128, 128]), solid([128, 128, 128, 255]));
-        // 50 % red.
         assert_eq!(solid([0, 0, 128, 128]), solid([0, 0, 128, 255]));
     }
 
@@ -131,7 +128,6 @@ mod tests {
         // Half red: Cb, Cr halfway between neutral and red's.
         assert_eq!(&output[10..], &[115, 184], "black over red block");
 
-        // Reused scratch carries nothing over.
         converter
             .convert(rows(&pixels, 20), 4, 2, &mut output)
             .unwrap();

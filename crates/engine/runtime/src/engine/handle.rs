@@ -21,6 +21,10 @@ pub(super) enum Command {
 /// once the engine is faulted or shutting down (see [`Core::refusal`](super::Core::refusal)).
 pub(super) enum Request {
     SetTarget(LightingTarget, Reply<()>),
+    PressPower(Reply<()>),
+    ResumeScreenSync(Reply<()>),
+    Pause(Reply<()>),
+    Recheck(Reply<()>),
     ReplaceSettings {
         expected: Revision,
         settings: Box<Settings>,
@@ -35,6 +39,10 @@ impl Request {
     pub(super) fn refuse(self, error: Error) {
         match self {
             Self::SetTarget(_, reply)
+            | Self::PressPower(reply)
+            | Self::ResumeScreenSync(reply)
+            | Self::Pause(reply)
+            | Self::Recheck(reply)
             | Self::SetCalibration(_, reply)
             | Self::TryProcessing(_, reply) => {
                 let _ = reply.send(Err(error));
@@ -61,14 +69,43 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
-    /// Lights that do not answer the request putting them `Off` or in their
-    /// own effects are no failure: the target is taken and the engine waits
-    /// for them ([`UNANSWERED_INTERVAL`](crate::UNANSWERED_INTERVAL)).
+    /// Request a mode or explicitly turn the device off. The snapshot reports
+    /// asynchronous device readiness, completion and failures.
     ///
     /// # Errors
-    /// Missing adapter settings, open failure, or a faulted or stopped engine.
+    /// The engine stopped or faulted.
     pub async fn set_target(&self, target: LightingTarget) -> Result<()> {
         self.call(|reply| Request::SetTarget(target, reply)).await
+    }
+
+    /// Resume a previously authorized Screen sync after a supervised worker
+    /// replacement. The next session honors any current device override.
+    ///
+    /// # Errors
+    /// The engine stopped or faulted.
+    pub async fn resume_screen_sync(&self) -> Result<()> {
+        self.call(Request::ResumeScreenSync).await
+    }
+
+    /// Whether an output configuration offers its own display mode.
+    #[must_use]
+    pub fn output_supports_effects(&self, settings: &AdapterSettings) -> bool {
+        self.registry.supports_effects(settings)
+    }
+
+    /// Turn off or request the remembered mode.
+    pub async fn press_power(&self) -> Result<()> {
+        self.call(Request::PressPower).await
+    }
+
+    /// Cancel automatic starts and release a running session.
+    pub async fn pause(&self) -> Result<()> {
+        self.call(Request::Pause).await
+    }
+
+    /// Ask the configured adapters to recheck their prerequisites.
+    pub async fn recheck(&self) -> Result<()> {
+        self.call(Request::Recheck).await
     }
 
     /// Validate, persist, then apply. Returns the new revision once persisted;

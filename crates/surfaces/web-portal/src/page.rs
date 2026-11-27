@@ -75,7 +75,6 @@ mod tests {
             assert!(!text.contains(raw), "{raw:?} in {text}");
         }
         assert_eq!(serde_json::from_str::<Value>(text).unwrap(), state);
-        // One block, and the page's own markup after it.
         let page = std::str::from_utf8(&page).unwrap();
         assert_eq!(page.matches("<script").count(), 1);
         assert!(page.ends_with("</script></head><body></body></html>"));

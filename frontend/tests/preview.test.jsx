@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
-import { httpPreviewClient } from '@prysm/application-client/http';
+import { httpPortalClient } from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
 import { fakePreviewClient } from '../testkit/preview';
 import {
@@ -108,7 +108,6 @@ test('Home’s TV plays the preview in its screen, paused on every visit', async
       'no outline for the whole frame',
     );
 
-    // Black bars removed: the sampled area is outlined and named.
     await act(async () =>
       preview.send(
         frame({
@@ -155,7 +154,6 @@ test('Home’s TV plays the preview in its screen, paused on every visit', async
     await visibility('visible');
     assert.equal(preview.open(), 1);
 
-    // Leaving Home closes it; coming back, the preview is paused again.
     await openSettings();
     assert.equal(preview.open(), 0);
     await click(button('Home'));
@@ -225,7 +223,6 @@ test('the card says each state of the preview in one line', async () => {
     await click(button('Try again', $('.led-map-note')));
     assert.equal(preview.open(), 1);
 
-    // Offline: the stream closes and the line says why; back, it plays on.
     await act(async () => portal.fixture.drop());
     assert.equal(preview.open(), 0);
     assert.equal(line(), 'Waiting for the connection…');
@@ -267,7 +264,7 @@ test('the HTTP preview client follows the base URL, decodes events, skips newer 
     ),
     sse(`data: ${JSON.stringify(frame({ width: -1 }))}\n\n`),
   ];
-  const client = httpPreviewClient({
+  const client = httpPortalClient({
     baseUrl: 'http://192.168.1.20:8787/',
     fetch: async (url, init) => {
       urls.push(url);
@@ -301,7 +298,7 @@ test('the HTTP preview client follows the base URL, decodes events, skips newer 
 test('closing a preview stream cancels the request', async () => {
   let cancelled = 0;
   let signal;
-  const client = httpPreviewClient({
+  const client = httpPortalClient({
     fetch: async (url, init) => {
       signal = init.signal;
       assert.equal(url, '/api/v1/preview/stream');

@@ -529,6 +529,11 @@
   ],
   "State": [
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -549,6 +554,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {
         "brightness_percent": 40,
         "issue": "overridden",
@@ -603,6 +613,11 @@
       "calibration": {
         "pattern": "gray_192",
         "uncorrected": false
+      },
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
       },
       "device": {},
       "revision": 0,
@@ -669,6 +684,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "input": {
         "fps": 0,
@@ -706,6 +726,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -726,6 +751,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -763,6 +793,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -800,6 +835,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -825,6 +865,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -846,6 +891,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {
         "issue": "unreachable"
       },
@@ -991,6 +1041,9 @@
     },
     {
       "target": "effects"
+    },
+    {
+      "target": "remembered"
     }
   ],
   "luna/State": [
@@ -1318,6 +1371,25 @@
         "link": {
           "message": "waiting for the receiver: connection refused",
           "state": "waiting"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "capture_waiting"
         },
         "phase": "running"
       }

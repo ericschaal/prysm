@@ -2,9 +2,10 @@
 use super::*;
 
 mod restart;
+mod stable_crash;
 mod table;
 
-use crate::state::Asked;
+use crate::state::{Asked, FullWorker, SlimWorker};
 use prysm_ports::StreamEncoding;
 use prysm_webos_link::{Escalation, Failure, Fix, FullStatus, PrysmAddress, SlimLink, SlimStatus};
 use serde_json::json;
@@ -39,12 +40,11 @@ fn slim(preferences: Preferences) -> Machine {
     Machine::new(Spec::Slim, preferences)
 }
 
-fn spawn_full(target: LightingTarget) -> Effect {
+fn spawn_full() -> Effect {
     Effect::Spawn(
         FullArgs {
             settings: "/s.json".into(),
             listen: "0.0.0.0:8787".parse().unwrap(),
-            target,
         }
         .to_args(),
     )
@@ -108,6 +108,10 @@ fn failure(escalation: Escalation, message: &str) -> Failure {
 /// A worker's last word: it fails with `escalation`, for `message`.
 fn failed_with(escalation: Escalation, message: &str) -> Input {
     Input::Worker(Event::Failed(failure(escalation, message)))
+}
+
+fn initialized() -> Input {
+    Input::Worker(Event::Initialized {})
 }
 
 fn reported(status: WorkerStatus) -> Input {
@@ -194,11 +198,7 @@ fn full_runs_while_awake_and_gates_video_on_active() {
         t,
         vec![
             (0, Pw(Unknown), vec![]),
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (1, V(Video::Available), vec![video(Video::Available)]),
             (2, V(Video::Available), vec![]),
             (3, Pw(ScreenSaver), vec![video(Video::Unavailable)]),
@@ -214,7 +214,7 @@ fn full_runs_while_awake_and_gates_video_on_active() {
             (
                 9,
                 Exited(Exit::Code(0)),
-                vec![spawn_full(LightingTarget::Off), video(Video::Available)],
+                vec![spawn_full(), video(Video::Available)],
             ),
         ],
     );
@@ -225,7 +225,7 @@ fn full_runs_while_awake_and_gates_video_on_active() {
 }
 
 #[test]
-fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
+fn full_autostart_displays_the_hint_until_a_target_is_applied() {
     let mut m = full_with(Preferences {
         autostart: true,
         ..Preferences::default()
@@ -236,14 +236,7 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
         &mut m,
         t,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![
-                    spawn_full(LightingTarget::ScreenSync),
-                    video(Video::Unknown),
-                ],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (
                 10,
                 Target(LightingTarget::Off),
@@ -261,7 +254,6 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
         t,
         vec![
             (60_010, status_after(LightingTarget::Off, 1), vec![]),
-            // The portal turned the lights' own effects on.
             (60_020, status_after(LightingTarget::Effects, 1), vec![]),
         ],
     );
@@ -270,7 +262,6 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
         &mut m,
         t,
         vec![
-            // The app's targets are sent as chosen, each with the next number.
             (
                 60_030,
                 Target(LightingTarget::ScreenSync),
@@ -285,7 +276,6 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
         ],
     );
     assert_eq!(full_state(&m.state()).0, LightingTarget::Off);
-    // Once the worker applied the last one, its report wins again.
     script(
         &mut m,
         t,
@@ -303,11 +293,7 @@ fn a_new_worker_counts_target_commands_afresh() {
         &mut m,
         t,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (
                 1,
                 Target(LightingTarget::ScreenSync),
@@ -318,13 +304,12 @@ fn a_new_worker_counts_target_commands_afresh() {
                 Target(LightingTarget::Effects),
                 vec![send_target(LightingTarget::Effects, 2)],
             ),
-            // Restarted at once with the target it last had.
+            (2, initialized(), vec![]),
             (
                 3,
                 Exited(Exit::Code(1)),
-                vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)],
+                vec![spawn_full(), video(Video::Unknown)],
             ),
-            // The portal on the new worker turned the lights off.
             (1004, status(LightingTarget::Off), vec![]),
         ],
     );
@@ -341,7 +326,7 @@ fn a_new_worker_counts_target_commands_afresh() {
 }
 
 #[test]
-fn full_remembers_the_target_for_the_next_worker() {
+fn an_explicit_target_waits_for_a_worker_and_is_never_replayed_on_boot() {
     let (mut m, t) = (full(), Instant::now());
     script(
         &mut m,
@@ -352,22 +337,19 @@ fn full_remembers_the_target_for_the_next_worker() {
                 0,
                 Pw(Active),
                 vec![
-                    spawn_full(LightingTarget::ScreenSync),
+                    spawn_full(),
+                    send_target(LightingTarget::ScreenSync, 1),
                     video(Video::Unknown),
                 ],
             ),
-            (5, status(LightingTarget::Effects), vec![]),
+            (5, status_after(LightingTarget::Effects, 1), vec![]),
             (
                 6,
                 Pw(Asleep),
                 vec![video(Video::Unavailable), Effect::Terminate],
             ),
             (7, Exited(Exit::Code(0)), vec![]),
-            (
-                8,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)],
-            ),
+            (8, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
         ],
     );
 }
@@ -391,7 +373,6 @@ fn slim_needs_a_receiver_and_enable() {
         ],
     );
     assert_eq!(slim_state(&m.state()), (false, &SlimWorker::Stopped));
-    // Lighting is never sent to a slim worker.
     let mut m = slim(Preferences {
         autostart: true,
         ..slim_prefs()
@@ -433,7 +414,6 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
                 }),
                 vec![Effect::Terminate],
             ),
-            // Nothing starts before the old worker is reaped.
             (2, Pw(ScreenSaver), vec![]),
             (3, Pw(Active), vec![]),
             (4, Tick, vec![]),
@@ -442,7 +422,6 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
                 Exited(Exit::Code(0)),
                 vec![spawn_slim(&fast), video(Video::Unknown)],
             ),
-            // Autostart alone does not restart.
             (
                 6,
                 Input::Preferences(Preferences {
@@ -465,15 +444,11 @@ fn silence_is_a_hang_then_term_then_one_kill() {
         &mut m,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
+            (0, initialized(), vec![]),
             (10_000, status(LightingTarget::Off), vec![]),
             (24_999, Tick, vec![]),
             (25_000, Tick, vec![Effect::Terminate]),
-            // A late line from the stopping worker changes nothing.
             (26_000, status(LightingTarget::Off), vec![]),
             (32_999, Tick, vec![]),
             (33_000, Tick, vec![Effect::Kill]),
@@ -481,7 +456,7 @@ fn silence_is_a_hang_then_term_then_one_kill() {
             (
                 40_001,
                 Exited(Exit::Signal(9)),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+                vec![spawn_full(), video(Video::Unknown)],
             ),
         ],
     );
@@ -503,11 +478,7 @@ fn the_other_packages_status_breaks_the_link() {
         &mut m,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (
                 1,
                 slim_status(SlimStatus {
@@ -571,11 +542,7 @@ fn shutdown_stops_and_finishes_from_every_phase() {
         &mut running,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (1, Input::Shutdown, vec![Effect::Terminate]),
             (2, Pw(Active), vec![]),
         ],
@@ -589,11 +556,7 @@ fn shutdown_stops_and_finishes_from_every_phase() {
         &mut asking,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (1, Input::SpawnFailed("no such file".into()), vec![]),
             (2, Input::Shutdown, vec![]),
         ],
@@ -609,11 +572,7 @@ fn context_changes_reset_only_a_running_worker() {
         t0,
         vec![
             (0, Input::VideoContextChanged, vec![]),
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (
                 1,
                 Input::VideoContextChanged,
@@ -676,7 +635,7 @@ fn published_state_reflects_the_worker() {
             "log": [],
         })
     );
-    // Restarted: nothing of the old worker's report is left.
+    m.handle(initialized(), t0);
     m.handle(Exited(Exit::Code(1)), t0);
     let state = m.state();
     assert_eq!(
@@ -692,6 +651,41 @@ fn published_state_reflects_the_worker() {
             }
         )
     );
+}
+
+/// A running worker reports its lights issue; stopping and stopped publish none.
+#[test]
+fn a_running_full_worker_says_the_lights_issue() {
+    let mut machine = full();
+    let now = Instant::now();
+    let worker = |m: &Machine| serde_json::to_value(full_state(&m.state()).1).unwrap();
+    machine.handle(Pw(Active), now);
+    let mut report = full_report(LightingTarget::ScreenSync);
+    report.capturing = true;
+    report.fps = Some(30);
+    machine.handle(full_status(report.clone()), now);
+    assert_eq!(worker(&machine).get("lights"), None, "absent, never null");
+    report.lights = Some(prysm_webos_link::OutputIssue::Unreachable);
+    machine.handle(full_status(report), now);
+    assert_eq!(
+        full_state(&machine.state()).1,
+        &FullWorker::Running {
+            capturing: true,
+            fps: Some(30),
+            lights: Some(prysm_webos_link::OutputIssue::Unreachable),
+            portal: None,
+            problem: None,
+        }
+    );
+    assert_eq!(worker(&machine)["lights"], "unreachable");
+    machine.handle(Pw(Asleep), now);
+    let stopping = worker(&machine);
+    assert_eq!(stopping["phase"], "stopping");
+    assert_eq!(stopping.get("lights"), None);
+    machine.handle(Exited(Exit::Code(0)), now);
+    let stopped = worker(&machine);
+    assert_eq!(stopped["phase"], "stopped");
+    assert_eq!(stopped.get("lights"), None);
 }
 
 #[test]
@@ -757,14 +751,7 @@ fn only_a_running_worker_is_capturing() {
         &mut m,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![
-                    spawn_full(LightingTarget::ScreenSync),
-                    video(Video::Unknown),
-                ],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (1, capturing.clone(), vec![]),
         ],
     );
@@ -785,7 +772,6 @@ fn only_a_running_worker_is_capturing() {
     assert!(!full_capturing(&state));
     assert_eq!(full_state(&state).0, LightingTarget::Off);
 
-    // A worker being stopped, or a late line from it, never shows capturing.
     script(
         &mut m,
         t0,
@@ -809,7 +795,6 @@ fn only_a_running_worker_is_capturing() {
             (7, capturing, vec![]),
         ],
     );
-    // The portal still answers until the worker exits.
     assert_eq!(
         full_state(&m.state()).1,
         &FullWorker::Stopping {
@@ -817,7 +802,6 @@ fn only_a_running_worker_is_capturing() {
             problem: None,
         }
     );
-    // Until a late report says it does not.
     let closed = full_status(full_report(LightingTarget::ScreenSync));
     script(&mut m, t0, vec![(8, closed, vec![])]);
     assert_eq!(
@@ -850,6 +834,7 @@ fn what_is_asked_is_published_where_it_is_asked() {
                 Pw(Active),
                 vec![spawn_slim(&receiver()), video(Video::Unknown)],
             ),
+            (0, initialized(), vec![]),
             (1, slim_link(waiting.clone()), vec![]),
         ],
     );
@@ -884,7 +869,6 @@ fn what_is_asked_is_published_where_it_is_asked() {
             },
         })
     );
-    // A running full worker keeps running with what it asks.
     for (escalation, json) in [
         (
             Escalation::Ask(Fix::ChangeSettings),
@@ -1056,8 +1040,6 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
         assert_eq!(slim_state(&state).1, &SlimWorker::Stopped, "{input:?}");
         assert_eq!(state.package.problem(), None, "{input:?}");
     }
-    // Capture on, or a new address: the new worker starts without the old
-    // one's failure.
     let mut m = asking();
     script(
         &mut m,
@@ -1084,7 +1066,6 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
         )],
     );
     assert_eq!(m.state().package.problem(), None);
-    // A failed worker being stopped, then disabled: stopped, no failure.
     let mut m = slim(Preferences {
         autostart: true,
         ..slim_prefs()
@@ -1160,11 +1141,7 @@ fn a_worker_never_reaped_after_its_kill_is_let_go() {
         &mut m,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (1, Input::Shutdown, vec![Effect::Terminate]),
             (8_001, Tick, vec![Effect::Kill]),
             (16_000, Tick, vec![]),
@@ -1189,11 +1166,7 @@ fn unreadable_preferences_are_reported_until_saved() {
         &mut m,
         t0,
         vec![
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
+            (0, Pw(Active), vec![spawn_full(), video(Video::Unknown)]),
             (
                 1,
                 Input::WorkerBroken("bad line".into()),
@@ -1202,7 +1175,6 @@ fn unreadable_preferences_are_reported_until_saved() {
             (2, Exited(Exit::Code(1)), vec![]),
         ],
     );
-    // Standby dismisses what the person is asked, not this.
     assert_eq!(
         asked(&m.state()),
         Some((TRY_AGAIN, "worker link broke: bad line"))
@@ -1241,9 +1213,16 @@ fn every_full_target_takes_every_lighting_input() {
     for from in LightingTarget::ALL {
         for phase in [Where::Idle, Where::Running, Where::Stopping, Where::Asking] {
             for (input, chosen) in inputs.clone() {
-                let mut m = full();
-                let mut steps = vec![(0, Target(from), vec![])];
-                let start = vec![spawn_full(from), video(Video::Unknown)];
+                let mut m = Machine::resumed(
+                    Spec::Full {
+                        settings: "/s.json".into(),
+                        listen: "0.0.0.0:8787".parse().unwrap(),
+                    },
+                    Preferences::default(),
+                    from,
+                );
+                let mut steps = Vec::new();
+                let start = vec![spawn_full(), video(Video::Unknown)];
                 match phase {
                     Where::Idle => {}
                     Where::Running => steps.push((0, Pw(Active), start)),
@@ -1263,9 +1242,10 @@ fn every_full_target_takes_every_lighting_input() {
                 script(&mut m, t0, steps);
                 let (effects, intent) = match (chosen, phase) {
                     (Some(target), Where::Running) => (vec![send_target(target, 1)], target),
-                    (Some(target), Where::Asking) => {
-                        (vec![spawn_full(target), video(Video::Unknown)], target)
-                    }
+                    (Some(target), Where::Asking) => (
+                        vec![spawn_full(), send_target(target, 1), video(Video::Unknown)],
+                        target,
+                    ),
                     (Some(target), Where::Idle | Where::Stopping) => (vec![], target),
                     (None, Where::Idle | Where::Running | Where::Stopping | Where::Asking) => {
                         (vec![], from)

@@ -83,7 +83,6 @@ test('setup opens instead of the page while capture or lights are missing', asyn
         document.activeElement.textContent,
         'Setup closed; nothing was saved.',
       );
-      // Home says what is missing and offers setup.
       assert.equal(button('Set up Prysm').disabled, false);
     } finally {
       await portal.unmount();
@@ -452,7 +451,6 @@ test('setup lists the devices and the lights present as rows as each step opens;
     );
     await next();
 
-    // The lights present, looked for as their step opens, none ticked.
     assert.deepEqual(discovery.calls, ['capture/device', 'output/wled']);
     const lights = () => $$('input[type="radio"]', $('.device-rows'));
     assert.deepEqual(

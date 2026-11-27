@@ -49,7 +49,6 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
         root.render(<Host {...tvProps(flavor, fixture, supervisor)} />),
       );
       await act(async () => sleep(5));
-      // Both packages point to the portal that holds capture settings.
       assert.equal(
         document.getElementById('portal-address').querySelector('code')
           .textContent,
@@ -65,6 +64,7 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
         !!document.getElementById('prysm-address'),
         flavor === 'slim',
       );
+      await act(async () => document.getElementById('light-power').click());
       await act(async () =>
         document.getElementById('mode-screen_sync').click(),
       );
@@ -109,20 +109,16 @@ test('embedded TV and browser portal share one application; either may close', a
       );
     });
     await act(async () => sleep(5));
+    await act(async () => document.getElementById('light-power').click());
     await act(async () => document.getElementById('mode-screen_sync').click());
-    assert.equal(
-      browser.store.getState().connection.snapshot.target,
-      'screen_sync',
-    );
+    assert.equal(browser.getConnection().snapshot.target, 'screen_sync');
     await act(async () => tvRoot.unmount());
     tvClosed = true;
     await act(async () =>
-      browser.store.dispatch(
-        browser.commands.configureOutput(0, {
-          ...output,
-          address: '192.0.2.44',
-        }),
-      ),
+      browser.commands.configureOutput(0, {
+        ...output,
+        address: '192.0.2.44',
+      }),
     );
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.44');
     assert.equal(fixture.snapshot().target, 'screen_sync');

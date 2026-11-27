@@ -22,12 +22,9 @@ pub(crate) fn upgrade(
     mut request: Request<Incoming>,
 ) -> Response {
     let Some(key) = websocket_key(request.headers()) else {
-        return failure(
-            StatusCode::BAD_REQUEST,
-            Failure::BadRequest {
-                message: "expected a WebSocket upgrade".into(),
-            },
-        );
+        return failure(Failure::BadRequest {
+            message: "expected a WebSocket upgrade".into(),
+        });
     };
     let headers = request.headers();
     let protocols = headers
@@ -40,14 +37,10 @@ pub(crate) fn upgrade(
     let offer = match handoff.answer(protocols, offer) {
         Answer::Upgrade { offer } => offer,
         Answer::Version => {
-            let mut refused = failure(
-                StatusCode::UPGRADE_REQUIRED,
-                Failure::UpgradeRequired {
-                    message:
-                        "the sender speaks another capture stream version; update the older one"
-                            .into(),
-                },
-            );
+            let mut refused = failure(Failure::UpgradeRequired {
+                message: "the sender speaks another capture stream version; update the older one"
+                    .into(),
+            });
             refused.headers_mut().insert(
                 header::SEC_WEBSOCKET_PROTOCOL,
                 HeaderValue::from_static(CAPTURE_PROTOCOL),
@@ -57,12 +50,9 @@ pub(crate) fn upgrade(
         Answer::Unavailable => {
             let message = "no source receives the capture stream: \
                            lighting is off or the capture is not `remote`";
-            return failure(
-                StatusCode::SERVICE_UNAVAILABLE,
-                Failure::Unavailable {
-                    message: message.into(),
-                },
-            );
+            return failure(Failure::Unavailable {
+                message: message.into(),
+            });
         }
     };
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
@@ -76,7 +66,6 @@ pub(crate) fn upgrade(
                 return;
             }
         };
-        // Always the portal's own connection type.
         let Ok(parts) = upgraded.downcast::<TokioIo<TimedIo>>() else {
             tracing::warn!("the capture stream upgrade is not a portal connection");
             return;
@@ -92,7 +81,6 @@ pub(crate) fn upgrade(
             tracing::debug!(%error, "the capture stream socket cannot be made blocking");
             return;
         }
-        // A source that stopped in between: the connection closes.
         if handoff
             .offer(Accepted {
                 socket,

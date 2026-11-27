@@ -137,15 +137,40 @@ impl Session {
             started: false,
         })
     }
-}
 
-/// What one frame became.
-enum Encoded {
-    /// Software rate control skipped it.
-    Skipped,
-    /// A picture is in the encoder's output; `keyframe` when it starts the
-    /// session.
-    Picture { keyframe: bool },
+    fn encode<'out>(
+        &mut self,
+        frame: &Frame,
+        (y, uv): (&[u8], &[u8]),
+        output: &'out mut Vec<u8>,
+    ) -> Result<Option<Picture<'out>>, H264Error> {
+        let keyframe = !self.started;
+        let kind = match &mut self.codec {
+            Codec::Software(codec) => {
+                let Some(kind) = codec.encode(
+                    frame.width() as usize,
+                    frame.height() as usize,
+                    y,
+                    uv,
+                    output,
+                )?
+                else {
+                    return Ok(None);
+                };
+                kind
+            }
+            #[cfg(feature = "hardware")]
+            Codec::Hardware(codec) => codec.encode(frame.as_slice(), keyframe, output)?,
+        };
+        if keyframe && kind != FrameKind::Idr {
+            return Err(H264Error::StartedWithoutIdr);
+        }
+        self.started = true;
+        Ok(Some(Picture {
+            data: output,
+            keyframe,
+        }))
+    }
 }
 
 /// Encodes NV12 frames with the configured [`Backend`]. A session (one
@@ -212,8 +237,8 @@ impl Encoder {
     /// # Errors
     /// The frame is not limited-range BT.709 NV12 of a size within the
     /// backend's [limits](Backend::limits), or the backend cannot
-    /// start or failed. The session is closed then; the caller reports the
-    /// failure (and may try again, which opens a new session).
+    /// start or failed. An invalid input leaves the session untouched. A backend
+    /// failure closes it; the next valid frame opens a new session.
     pub fn encode(&mut self, frame: &Frame) -> Result<Option<Picture<'_>>, H264Error> {
         let (width, height) = (frame.width(), frame.height());
         let limits = self.settings.backend.limits();
@@ -222,7 +247,7 @@ impl Encoder {
                 && limits.width().contains(width)
                 && limits.height().contains(height)
         });
-        let Some((y, uv)) = planes else {
+        let Some(planes) = planes else {
             return Err(H264Error::Input {
                 width,
                 height,
@@ -236,51 +261,15 @@ impl Encoder {
         {
             self.restart();
         }
-        let result = self.encode_planes(width, height, y, uv, frame.as_slice());
-        match result {
-            Ok(Encoded::Picture { keyframe }) => Ok(Some(Picture {
-                data: &self.output,
-                keyframe,
-            })),
-            Ok(Encoded::Skipped) => Ok(None),
-            Err(error) => {
-                self.restart();
-                Err(error)
-            }
-        }
-    }
-
-    /// Encode into `self.output`, opening a session first if none is open.
-    fn encode_planes(
-        &mut self,
-        width: u32,
-        height: u32,
-        y: &[u8],
-        uv: &[u8],
-        #[cfg_attr(not(feature = "hardware"), allow(unused_variables))] pixels: &[u8],
-    ) -> Result<Encoded, H264Error> {
         let session = match &mut self.session {
             Some(session) => session,
-            None => self
-                .session
-                .insert(Session::open(self.settings, width, height)?),
+            slot => slot.insert(Session::open(self.settings, width, height)?),
         };
-        let kind = match &mut session.codec {
-            Codec::Software(codec) => {
-                match codec.encode(width as usize, height as usize, y, uv, &mut self.output)? {
-                    Some(kind) => kind,
-                    None => return Ok(Encoded::Skipped),
-                }
-            }
-            #[cfg(feature = "hardware")]
-            Codec::Hardware(codec) => codec.encode(pixels, &mut self.output)?,
-        };
-        let keyframe = !session.started;
-        if keyframe && kind != FrameKind::Idr {
-            return Err(H264Error::StartedWithoutIdr);
+        let result = session.encode(frame, planes, &mut self.output);
+        if result.is_err() {
+            self.session = None;
         }
-        session.started = true;
-        Ok(Encoded::Picture { keyframe })
+        result
     }
 }
 
@@ -423,7 +412,6 @@ mod tests {
             let error = mean_abs_diff(&out, input.as_slice());
             assert!(error < 3.0, "frame {i}: mean error {error}");
         }
-        // A restart begins a new, independently decodable session.
         encoder.restart();
         let input = frame(width, height, 77, (200, 60));
         let picture = encoder.encode(&input).unwrap().unwrap();
@@ -433,7 +421,6 @@ mod tests {
             .decode(picture.data, width, height, &mut out)
             .unwrap();
         assert!(mean_abs_diff(&out, input.as_slice()) < 3.0);
-        // So does a size change.
         let bigger = frame(96, 64, 5, (128, 128));
         let picture = encoder.encode(&bigger).unwrap().unwrap();
         assert!(picture.keyframe);
@@ -510,7 +497,6 @@ mod tests {
         );
         let mut decoder = Decoder::new().unwrap();
         decoder.decode(&pictures[0], 64, 32, &mut out).unwrap();
-        // Frame 1 dropped.
         assert!(decoder.decode(&pictures[2], 64, 32, &mut out).is_err());
     }
 }

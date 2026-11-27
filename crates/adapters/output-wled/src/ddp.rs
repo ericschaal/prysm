@@ -21,7 +21,7 @@ use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
 use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors, LinearColor};
-use std::net::{ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 
 /// How WLED turns a byte into light, and so how a linear colour is encoded.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -125,11 +125,7 @@ impl WledRenderer {
             .to_socket_addrs()?
             .next()
             .ok_or(DDPError::NoValidSocketAddr)?;
-        let socket = UdpSocket::bind(if destination.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        })?;
+        let socket = bind(destination)?;
         socket.set_nonblocking(true)?;
         let rgb = Rgb8Payload::default();
         let connection =
@@ -182,20 +178,13 @@ impl WledRenderer {
             return Ok(());
         }
         let [top, right, bottom, left] = leds.edges();
-        let colors = [
-            (&edges.left, left, true),
-            (&edges.top, top, false),
-            (&edges.right, right, false),
-            (&edges.bottom, bottom, true),
-        ]
-        .into_iter()
-        .flat_map(|(strip, count, reverse)| {
-            (0..count).map(move |i| {
-                strip
-                    .color_at(if reverse { count - 1 - i } else { i }, count)
-                    .expect("an index below the count has a colour")
-            })
-        });
+        let colors = edges
+            .left
+            .iter_resampled(left)
+            .rev()
+            .chain(edges.top.iter_resampled(top))
+            .chain(edges.right.iter_resampled(right))
+            .chain(edges.bottom.iter_resampled(bottom).rev());
         for (led, color) in (0..).zip(colors) {
             self.rgb.push(encoding.encode(color, led));
         }
@@ -229,6 +218,23 @@ impl WledRenderer {
         self.rgb.clear_reserve(count);
         true
     }
+}
+
+fn bind(destination: SocketAddr) -> std::io::Result<UdpSocket> {
+    UdpSocket::bind(if destination.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })
+}
+
+/// Ask the kernel which local address it currently uses for the DDP route.
+/// UDP connect does not send a packet, and the streaming socket stays unconnected.
+pub(crate) fn route_address(destination: SocketAddr) -> Option<IpAddr> {
+    let socket = bind(destination).ok()?;
+    socket.connect(destination).ok()?;
+    let local = socket.local_addr().ok()?.ip().to_canonical();
+    (!local.is_unspecified()).then_some(local)
 }
 
 #[cfg(test)]
@@ -417,7 +423,6 @@ mod tests {
 
     #[test]
     fn a_send_error_with_no_row_fails_the_first_frame() {
-        // No datagram can be sent to port 0: every send fails locally.
         let mut renderer = WledRenderer::new("127.0.0.1:0").unwrap();
         let error = renderer
             .render_edges(&EdgeColors::default(), leds([1, 0, 0, 0]), &NEAREST)
@@ -533,7 +538,6 @@ mod tests {
                 .data
                 .to_vec()
         };
-        // 0.18^(1/2.8) and 0.18 in sRGB.
         assert_eq!(
             send(Transfer::Gamma(Gamma::new(2.8).unwrap())),
             [138, 0, 255]

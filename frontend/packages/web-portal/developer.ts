@@ -1,4 +1,4 @@
-import { createContext, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 
 /**
  * Developer options: the video sources and lights meant for development and
@@ -11,7 +11,7 @@ export const developerStorageKey = 'prysm.developer';
 /** Told when the preference changes in this page (`storage` covers others). */
 const changed = 'prysm-developer';
 
-/** Without storage (a private window) the choice lasts the page. */
+/** Fallback for the current page when storage is unavailable. */
 let unstored = false;
 
 function storedDeveloper() {
@@ -29,7 +29,7 @@ export function saveDeveloper(on: boolean) {
     if (on) window.localStorage.setItem(developerStorageKey, 'on');
     else window.localStorage.removeItem(developerStorageKey);
   } catch {
-    // Storage is unavailable: the choice lasts the page.
+    // Keep the in-memory choice if storage is unavailable.
   }
   window.dispatchEvent(new window.Event(changed));
 }
@@ -47,6 +47,3 @@ function subscribe(notify: () => void) {
 export function useDeveloper() {
   return useSyncExternalStore(subscribe, storedDeveloper, () => false);
 }
-
-/** Developer options, for the kind selectors. */
-export const DeveloperContext = createContext(false);

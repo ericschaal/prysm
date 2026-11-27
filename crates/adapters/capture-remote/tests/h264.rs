@@ -227,10 +227,8 @@ fn a_lost_picture_requests_a_keyframe_and_the_stream_recovers() {
         "a keyframe request"
     );
     assert!(try_receive(&mut source, Duration::from_millis(200)).is_none());
-    // Later pictures of the broken session are skipped, not misdecoded.
     client.encode(&frames[4], false);
     assert!(try_receive(&mut source, Duration::from_millis(200)).is_none());
-    // A new session's keyframe decodes as the current picture.
     client.encoder.restart();
     assert!(client.encode(&frames[5], false));
     assert!(mean_error(&receive(&mut source), &frames[5]) < 4.0);
@@ -332,15 +330,12 @@ fn a_keyframe_request_starts_a_new_session_and_unknown_types_are_ignored() {
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    // A type this end does not know does not end the stream: it goes on to
-    // the keyframe requested after it.
     recorder.command(r#"{"type":"pause"}"#);
     recorder.command(r#"{"type":"keyframe"}"#);
     recorder.until_keyframe(&mut sender, &mut next);
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    // Text that is not a command fails the connection.
     recorder.command("jump");
     let error = eventually("the sender to read it", BOUND, || sender.tick().err());
     assert!(
@@ -377,7 +372,6 @@ fn an_unavailable_hardware_encoder_is_refused_without_switching() {
     let error = sender.send(&picture(64, 32, 0)).unwrap_err();
     assert!(error.cause::<H264Error>().is_some(), "{error}");
     let refused = failure(&mut source);
-    // The encoding is named as the setting the sender cannot produce.
     let prysm_ports::Error::Invalid(invalid) = &refused else {
         panic!("{refused:?}");
     };

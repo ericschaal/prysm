@@ -15,7 +15,6 @@ const realSetTimeout = globalThis.setTimeout;
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function mountDom(html = '<div id="root"></div>') {
-  // An address of its own, as served: the portal's hash router needs one.
   const dom = new JSDOM(html, { url: 'http://prysm.test/' });
   // jsdom draws nothing, so there is nothing to scroll.
   dom.window.scrollTo = () => {};
@@ -90,7 +89,6 @@ export async function renderPortal(
       }),
     async unmount() {
       await act(async () => root.unmount());
-      // Developer options outlive a page without storage: off for the next.
       saveDeveloper(false);
       dom.window.close();
     },

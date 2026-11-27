@@ -1,7 +1,7 @@
 //! The engine's side of the supervisor link: commands in, status out.
 use futures::future::BoxFuture;
 use prysm_capture_webos::VideoSignal;
-use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
+use prysm_ports::{Error, LightingMode, LightingTarget, Result, SessionState, Snapshot};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_webos_link::worker::Link;
 use prysm_webos_link::{Command, Event, Failure, FullStatus, HEARTBEAT, WorkerStatus};
@@ -21,22 +21,15 @@ pub type PortalUrl = Box<dyn Fn() -> Option<String> + Send>;
 pub struct EngineLink {
     link: Link,
     video: VideoSignal,
-    initial: LightingTarget,
     portal_url: PortalUrl,
     heartbeat: Duration,
 }
 
 impl EngineLink {
-    pub fn new(
-        link: Link,
-        video: VideoSignal,
-        initial: LightingTarget,
-        portal_url: PortalUrl,
-    ) -> Self {
+    pub fn new(link: Link, video: VideoSignal, portal_url: PortalUrl) -> Self {
         Self {
             link,
             video,
-            initial,
             portal_url,
             heartbeat: HEARTBEAT,
         }
@@ -55,15 +48,15 @@ impl EngineLink {
             events,
             ..
         } = self.link;
-        if self.initial != LightingTarget::Off {
-            apply(&engine, self.initial).await;
-        }
         let mut snapshots = engine.snapshot();
         let mut portal = (self.portal_url)();
         let mut sent: Option<WorkerStatus> = None;
         let mut beat = Instant::now() + self.heartbeat;
-        // The last target command applied: 0 until one is.
         let mut applied = 0;
+        let mut requested = None;
+        let mut initialized = false;
+        let mut video_initialized = false;
+        let mut video_seen = false;
         loop {
             let snapshot = snapshots.borrow_and_update().clone();
             let status = status(&snapshot, portal.as_deref(), applied);
@@ -72,21 +65,55 @@ impl EngineLink {
                 sent = Some(status);
                 beat = Instant::now() + self.heartbeat;
             }
+            if !initialized
+                && video_seen
+                && operation_initialized(
+                    &snapshot,
+                    requested.unwrap_or(snapshot.target),
+                    video_initialized,
+                )
+            {
+                events.send(&Event::Initialized {});
+                initialized = true;
+            }
             tokio::select! {
                 biased;
                 () = shutdown.requested() => return Ok(()),
+                () = self.video.initialized(), if !initialized && !video_initialized => {
+                    video_initialized = true;
+                }
                 command = commands.next() => match command {
                     // The link closed; the stop reason is already recorded.
                     None => return Ok(()),
-                    Some(Command::Video { video }) => self.video.set(video),
+                    Some(Command::Video { video }) => {
+                        self.video.set(video);
+                        video_seen = true;
+                    }
                     Some(Command::ResetVideo {}) => self.video.reset(),
+                    Some(Command::ObserveVideo { available }) => self.video.observe(available),
                     Some(Command::Target { target, sequence }) => {
                         apply(&engine, target).await;
                         applied = sequence;
+                        requested = Some(target);
+                    }
+                    Some(Command::Resume { sequence }) => {
+                        let target = match snapshots.borrow().control.remembered {
+                            LightingMode::ScreenSync => LightingTarget::ScreenSync,
+                            LightingMode::Effects => LightingTarget::Effects,
+                        };
+                        apply(&engine, target).await;
+                        applied = sequence;
+                        requested = Some(target);
+                    }
+                    Some(Command::RecoverScreenSync { sequence }) => {
+                        let _ = engine.resume_screen_sync().await;
+                        applied = sequence;
+                        // An authoritative override can fulfill the recovered
+                        // worker in Effects instead of Screen sync.
+                        requested = None;
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
-                // The heartbeat: the status again, with the current portal URL.
                 () = sleep_until(beat) => {
                     portal = (self.portal_url)();
                     sent = None;
@@ -112,6 +139,17 @@ async fn apply(engine: &EngineHandle, target: LightingTarget) {
     let _ = engine.set_target(target).await;
 }
 
+fn operation_initialized(
+    snapshot: &Snapshot,
+    requested: LightingTarget,
+    video_initialized: bool,
+) -> bool {
+    snapshot.control.waiting.is_none()
+        && snapshot.session.reached(requested)
+        && (requested != LightingTarget::ScreenSync || video_initialized)
+        && failure(snapshot).is_none()
+}
+
 /// The status after the target command `applied`.
 fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStatus {
     WorkerStatus::Full(FullStatus {
@@ -135,10 +173,16 @@ fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStat
 fn failure(snapshot: &Snapshot) -> Option<Failure> {
     match &snapshot.session {
         SessionState::Faulted(phase) => Some(Failure::of(&Error::Faulted(*phase))),
-        session => session
-            .failure()
-            .or(snapshot.surface_failures.last())
-            .map(Failure::of),
+        session => {
+            let adapter_failure = if snapshot.control.waiting.is_none() {
+                session.failure()
+            } else {
+                None
+            };
+            adapter_failure
+                .or(snapshot.surface_failures.last())
+                .map(Failure::of)
+        }
     }
 }
 
@@ -156,6 +200,60 @@ fn whole_fps(fps: f32) -> u16 {
 mod tests {
     use super::*;
     use prysm_ports::{Escalation, Fix, SessionPhase, ValidationError};
+
+    #[test]
+    fn stable_screen_sync_requires_initialized_video_and_the_running_session() {
+        let mut snapshot = Snapshot {
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
+            ..Snapshot::default()
+        };
+        assert!(!operation_initialized(
+            &snapshot,
+            LightingTarget::ScreenSync,
+            false
+        ));
+        assert!(operation_initialized(
+            &snapshot,
+            LightingTarget::ScreenSync,
+            true
+        ));
+        snapshot.session = SessionState::Stopped { failure: None };
+        assert!(!operation_initialized(
+            &snapshot,
+            LightingTarget::ScreenSync,
+            true
+        ));
+        assert!(operation_initialized(&snapshot, LightingTarget::Off, false));
+        snapshot.session = SessionState::Effects {
+            failure: Some(Error::other("offline")),
+        };
+        assert!(!operation_initialized(
+            &snapshot,
+            LightingTarget::Effects,
+            false
+        ));
+    }
+
+    #[test]
+    fn a_waiting_adapter_keeps_its_cause_without_asking_to_restart_or_retry() {
+        let mut snapshot = Snapshot {
+            target: LightingTarget::ScreenSync,
+            session: SessionState::Stopped {
+                failure: Some(Error::other("no frame")),
+            },
+            ..Snapshot::default()
+        };
+        snapshot.control.waiting = Some(prysm_ports::WaitingFor::Capture);
+        assert_eq!(failure(&snapshot), None);
+        assert!(!operation_initialized(
+            &snapshot,
+            LightingTarget::ScreenSync,
+            true
+        ));
+        snapshot.control.waiting = None;
+        assert_eq!(failure(&snapshot).unwrap().message, "no frame");
+    }
 
     /// A faulted session is reported as `Restart`, before any surface
     /// failure; another session's failure, or else the last surface

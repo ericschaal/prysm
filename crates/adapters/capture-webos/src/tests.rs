@@ -389,7 +389,6 @@ fn losing_video_releases_the_tap_and_frames_resume() {
     assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
     assert_eq!(driver.count(|s| s.opens), 2);
 
-    // A context change restarts the tap without losing the source.
     video.reset();
     eventually("`driver.count(|s| s.releases) == 2`", LIMIT, || {
         (driver.count(|s| s.releases) == 2).then_some(())
@@ -406,7 +405,6 @@ fn newest_frame_wins() {
     let video = VideoSignal::default();
     driver.push([Step::Frame(1), Step::Frame(2), Step::Frame(3)]);
     let mut frames = start(&driver, &video);
-    // All three are acquired before anything is taken; only the last remains.
     eventually("`driver.count(|s| s.acquires) > 3`", LIMIT, || {
         (driver.count(|s| s.acquires) > 3).then_some(())
     });
@@ -628,12 +626,10 @@ fn a_context_reset_keeps_a_created_only_driver() {
     driver.push([Step::Frame(5)]);
     video.reset();
     assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
-    // The thread goes on acquiring at its pace after the frame.
     let (opens, acquires, releases) = calls(&driver);
     assert_eq!((opens, releases), (1, 0));
     assert!(acquires >= 2, "{acquires} acquisitions");
 
-    // Refused, then a new context: the same driver again.
     driver.push([Step::Refused]);
     video.reset();
     refused(&mut frames);
@@ -693,28 +689,53 @@ fn stalled_producer_restarts_the_tap() {
     closes_cleanly(frames);
 }
 
-/// The new driver stalling too, with no frame between, is the TV
-/// withholding the picture: no failure, no timer; the pulls say refused
-/// until a change of the video signal opens a new driver and frames come.
 #[test]
-fn two_stalls_in_a_row_wait_for_the_video_signal() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Available);
-    let limits = Limits {
-        pending: Duration::from_millis(50),
-        ..TEST
+fn two_stalls_end_the_source_and_produce_typed_readiness() {
+    use prysm_ports::Readiness;
+    let settings = WebosSettings {
+        fps: 60,
+        include_ui: false,
+        ..WebosSettings::default()
     };
-    let mut frames = start_with(&driver, &video, limits);
-    refused(&mut frames);
-    let (opens, _, releases) = calls(&driver);
-    assert_eq!((opens, releases), (2, 2), "one new driver, both released");
-    assert_eq!(driver.count(|s| s.open_taps), 0);
-    driver.push([Step::Frame(3)]);
-    video.reset();
-    // Queued with no tap held: only a third driver can deliver it.
-    assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
-    closes_cleanly(frames);
+    for observable in [false, true] {
+        let driver = Driver::new();
+        let video = VideoSignal::default();
+        video.observe(observable);
+        video.set(Video::Available);
+        let limits = Limits {
+            pending: Duration::from_millis(50),
+            ..TEST
+        };
+        let mut frames = start_with(&driver, &video, limits);
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let error = loop {
+            assert!(std::time::Instant::now() < deadline, "no stall reported");
+            match frames.next_frame(SHORT) {
+                Ok(Pull::Quiet) => {}
+                Err(error) => break error,
+                other => panic!("unexpected pull: {other:?}"),
+            }
+        };
+        assert!(error.cause::<crate::RepeatedStall>().is_some());
+        assert_eq!((calls(&driver).0, calls(&driver).2), (2, 2));
+        closes_cleanly(frames);
+        match (video.capture_readiness(&settings), observable) {
+            (Readiness::Waiting(_), true) | (Readiness::Blocked(_), false) => {}
+            other => panic!("unexpected readiness: {other:?}"),
+        }
+        let stop = prysm_ports::Hangup::default();
+        if observable {
+            video.reset();
+            assert!(matches!(
+                video.watch_stall(&settings, &stop),
+                Some(Readiness::Ready)
+            ));
+            driver.push([Step::Frame(3)]);
+            let mut replacement = start_with(&driver, &video, limits);
+            assert_eq!(next(&mut replacement).as_slice(), &[3; 96]);
+            closes_cleanly(replacement);
+        }
+    }
 }
 
 /// No video plane to capture (status 13) on the first acquisition: the tap
@@ -772,7 +793,6 @@ fn a_failed_first_acquisition_releases_and_reopens_the_tap() {
     driver.push([Step::Fail { fatal: false }, Step::Frame(3)]);
     let mut frames = start(&driver, &video);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
-    // The thread goes on acquiring at its pace after the frame.
     let (opens, acquires, releases) = calls(&driver);
     assert_eq!((opens, releases), (2, 1));
     assert!(acquires >= 2, "{acquires} acquisitions");
@@ -835,7 +855,6 @@ fn watchdog_reports_a_hung_native_call() {
         error.to_string().contains("native acquire has run"),
         "{error}"
     );
-    // The driver returns late; the thread still releases the tap.
     driver.unhang();
     eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
         (driver.count(|s| s.releases) == 1).then_some(())
@@ -853,8 +872,6 @@ fn ui_tap_replaces_video_only_while_there_is_none() {
     assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
     assert_eq!(driver.count(|s| s.ui_opens), 0, "UI tap next to video");
 
-    // Home: video is released before the UI tap opens; its frames flow,
-    // at their own size.
     video.set(Video::Unavailable);
     let ui = next_where(&mut frames, |f| f.width() == 4);
     assert_eq!(
@@ -867,14 +884,12 @@ fn ui_tap_replaces_video_only_while_there_is_none() {
         4
     );
 
-    // Back to an input: UI released, video reopened.
     driver.push([Step::Frame(2)]);
     video.set(Video::Available);
     assert_eq!(
         next_where(&mut frames, |f| f.width() == 8).as_slice(),
         &[2; 96]
     );
-    // A context change on Home reopens the UI tap.
     let captured = |opens| {
         let script = driver.script();
         script.ui_opens == opens && script.events.last().unwrap().0 == "UI acquire"
@@ -1135,7 +1150,6 @@ fn ui_size_is_capped_and_floored() {
     assert_eq!(size(256, 144), (256, 144));
     assert_eq!(size(160, 90), (256, 144), "HAL fails below 256x144");
     assert_eq!(size(2, 2), (256, 144));
-    // Non-16:9: each axis on its own; the plane is stretched to fill.
     assert_eq!(size(640, 480), (320, 180));
     assert_eq!(size(200, 1080), (256, 180));
 }

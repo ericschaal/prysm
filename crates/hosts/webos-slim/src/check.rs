@@ -378,7 +378,6 @@ mod tests {
 
     #[test]
     fn only_the_own_picture_passes_the_comparison() {
-        // Partial blocks at the right and bottom edges, and wraparound below 2.
         let (width, height) = (40, 24);
         let pixels = |index| picture(width, height, index).as_slice().to_vec();
         for index in [0, 1, 5, 9] {
@@ -388,7 +387,6 @@ mod tests {
             let error = compare(&pixels(wrong), width, height, 10).unwrap_err();
             assert!(error.contains("shows picture"), "{wrong}: {error}");
         }
-        // Torn: the bottom block row and its chroma come from picture 11.
         let (mut torn, next) = (pixels(10), pixels(11));
         let w = width as usize;
         let luma = w * height as usize;
@@ -396,7 +394,6 @@ mod tests {
         torn[luma + w * 8..].copy_from_slice(&next[luma + w * 8..]);
         let error = compare(&torn, width, height, 10).unwrap_err();
         assert!(error.contains("(0, 16)"), "{error}");
-        // Every level off by more than the tolerance, nearest still its own.
         let shifted: Vec<u8> = pixels(10).iter().map(|&value| value + 9).collect();
         let error = compare(&shifted, width, height, 10).unwrap_err();
         assert!(error.contains("away from its colour"), "{error}");

@@ -105,7 +105,7 @@ the target is reached when `session.state` equals it (`off` is reached by
 | `{ "state": "stopped", "failure"?: LightingFailure }` | No session; Prysm does not drive the lights. After an output failure they may not be off. |
 | `{ "state": "screen_sync" }` | A session runs. It never carries a failure: it runs on valid settings and has reached its target. |
 | `{ "state": "effects", "failure"?: LightingFailure }` | The lights show their own effects; no session. |
-| `{ "state": "unanswered", "failure"?: LightingFailure }` | No session: the lights do not answer the request that puts them in the target's mode (`off` or `effects`), which is tried again every 5 s until they answer. The target stays and is not reached meanwhile. |
+| `{ "state": "unanswered", "failure"?: LightingFailure }` | The requested mode is waiting for the output to become available. Power remains cancellable. |
 | `{ "state": "faulted", "message" }` | A session did not stop in time, or did not confirm its source's release; only a restart recovers. `message` says what did not finish, in words (not covered by the contract); the step itself is only logged. |
 
 A `failure` is present only while it explains the present: why the target is
@@ -121,32 +121,19 @@ settings as a whole are at fault), `adapter { message, section? }` or
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
 On input, `processing`, each of its fields, a calibration's `correction` and each of its controls may be omitted and take their defaults; a `custom_style` lists all seven values. Settings sections and the objects in them (the style, a custom style, a calibration, its correction and each primary) are JSON objects, never arrays: an array inside `settings` is `422 invalid` with its `field`, such as `processing.custom_style`. The generated schema describes the response shape.
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
-Setting the target to `screen_sync` opens the capture (a failure is the
-reply); the output is opened at the first frame, so an output that cannot
-open ends the session and appears only in `session.failure`, except lights
-that do not answer: the session runs on, `device.issue` is `unreachable`, and
-the open is tried again at a frame every 5 s until they answer; a quiet spell
-ends that wait and the issue with it. While no frames arrive, `input.picture` is `quiet` or
-`refused` (waiting for video) and after a few seconds the output is returned to its own
-state until frames return.
+A `screen_sync` request waits for both adapters. The runtime opens capture
+before powering the output. Read `control.waiting` for the current wait and
+`session.failure` for a reported failure. Power cancels a pending request.
+See [lighting transitions](../../../docs/developers/control-api.md#lighting-transitions).
 
 `device` is what the lights say about themselves,
 `{ "issue"?: …, "brightness_percent"?: …, "led_count"?: … }`, each part absent
-while the output cannot tell. It is `{}` while no session holds the output:
-no session, a session before its first frame, or one that returned the output
-after 3 s without video. Read `session.state` and `input.picture` for which;
-`{}` alone does not mean lighting stopped.
-Lights that do not answer with the target `off` or `effects` are the
-exception: `session.state` is `unanswered` and `device` is
-`{ "issue": "unreachable" }`; the issue clears once they answer. `issue` (absent
-when all is well) says why the lights are not showing its colours: `off`
-(switched off on the device), `overridden` (WLED's live override), `not_live`
-(the device is not taking realtime colours), `other_sender` or `unreachable`
-(no answer to its state checks, to the session's open while it waits for
-the lights, or to the request for `off` or the device's effects; then `device`
-holds only this).
-It is not a failure: lighting keeps sending, nothing is switched back, and the
-field clears once the device shows the colours again. `brightness_percent`
+while the output cannot tell. Read `session.state`, `control.waiting` and
+`input.picture` to distinguish a pending mode from an active stream. When a
+requested mode is waiting for an unreachable output the issue is
+`unreachable`. While streaming, device reports can also identify power off,
+lack of live data, or another sender. A detected explicit WLED live override
+hands the display to Effects. `brightness_percent`
 (0-100) is the device's own brightness while it scales the colours, and
 `led_count` how many LEDs the device itself says it has (WLED's LED count);
 Prysm keeps sending `settings.output.leds` either way and changes none of them.
@@ -410,7 +397,7 @@ metrics and no histograms.
 | `prysm_output_write_seconds_sum`, `_count` | summary | Time in output writes, and how many: frames and keep-alive rewrites, failed ones included |
 | `prysm_output_write_failures_total` | counter | Output writes that failed; each ends lighting with a failure |
 | `prysm_source_opens_total` | counter | Capture sources opened by starting lighting (also each restart after a capture or output change) |
-| `prysm_output_opens_total` | counter | Outputs opened to show colors: at a session's first frame and at the first frame after a release |
+| `prysm_output_opens_total` | counter | Outputs opened to show colors: after capture opens and when frames resume after idle release |
 
 Frames dropped inside a source (a newer frame replacing an untaken one) are
 not counted: adapters keep no metrics. Received minus sent is what the session

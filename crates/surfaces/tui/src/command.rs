@@ -8,6 +8,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     SetTarget(LightingTarget),
+    Power,
     /// Replace all settings with a settings file, against the revision shown.
     Load(PathBuf),
 }
@@ -16,9 +17,10 @@ pub(crate) enum Command {
 /// `read` reads a settings file as the host reads its own.
 pub(crate) async fn execute(engine: EngineHandle, read: ReadSettings, command: Command) -> Notice {
     match command {
-        Command::SetTarget(target) => match engine.set_target(target).await {
-            Ok(()) => Notice::info(format!("Target {}", target.as_str())),
-            Err(error) => Notice::error(format!("Target {}: {}", target.as_str(), chain(&error))),
+        Command::SetTarget(target) => set_target(&engine, target).await,
+        Command::Power => match engine.press_power().await {
+            Ok(()) => Notice::info("Power requested"),
+            Err(error) => Notice::error(format!("Power: {}", chain(&error))),
         },
         Command::Load(path) => {
             let shown = path.display().to_string();
@@ -27,6 +29,13 @@ pub(crate) async fn execute(engine: EngineHandle, read: ReadSettings, command: C
                 Err(error) => Notice::error(format!("Load {shown}: {}", chain(&error))),
             }
         }
+    }
+}
+
+async fn set_target(engine: &EngineHandle, target: LightingTarget) -> Notice {
+    match engine.set_target(target).await {
+        Ok(()) => Notice::info(format!("Target {}", target.as_str())),
+        Err(error) => Notice::error(format!("Target {}: {}", target.as_str(), chain(&error))),
     }
 }
 
@@ -46,9 +55,11 @@ async fn load(
 mod tests {
     use super::*;
     use crate::input::Severity;
-    use prysm_ports::SessionState;
+    use prysm_ports::{AdapterSettings, OutputFactory, SessionState, WaitingFor};
     use prysm_runtime::Engine;
-    use prysm_runtime::fakes::{self, CallLog, FakeOutputs, FakeSources, MemoryStore};
+    use prysm_runtime::fakes::{
+        self, CallLog, FakeOutputSettings, FakeOutputs, FakeSources, MemoryStore,
+    };
     use prysm_testkit::within_async;
     use std::sync::Arc;
     use std::time::Duration;
@@ -73,33 +84,92 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targets_drive_the_engine_and_failures_are_error_notices() {
+    async fn targets_are_accepted_and_the_snapshot_reports_the_outcome() {
         within_async(Duration::from_secs(5), async {
             let (handle, engine, log) = start(MemoryStore::with(fakes::settings())).await;
-            let target = |handle: &EngineHandle, target| {
-                execute(handle.clone(), read(), Command::SetTarget(target))
-            };
-            let on = target(&handle, LightingTarget::ScreenSync).await;
+            let set = |target| execute(handle.clone(), read(), Command::SetTarget(target));
+            let mut snapshots = handle.snapshot();
+
+            let on = set(LightingTarget::ScreenSync).await;
             assert_eq!(on, Notice::info("Target screen_sync"));
-            assert!(matches!(
-                handle.snapshot().borrow().session,
-                SessionState::ScreenSync
-            ));
+            snapshots
+                .wait_for(|snapshot| matches!(snapshot.session, SessionState::ScreenSync))
+                .await
+                .unwrap();
             assert!(log.wait_for("output.write:", 1).await);
-            let off = target(&handle, LightingTarget::Off).await;
+
+            let off = set(LightingTarget::Off).await;
             assert_eq!(off, Notice::info("Target off"));
-            assert!(matches!(
-                handle.snapshot().borrow().session,
-                SessionState::Stopped { failure: None }
-            ));
+            snapshots
+                .wait_for(|snapshot| {
+                    matches!(snapshot.session, SessionState::Stopped { failure: None })
+                        && !snapshot.control.busy
+                })
+                .await
+                .unwrap();
+
+            let on = execute(handle.clone(), read(), Command::Power).await;
+            assert_eq!(on, Notice::info("Power requested"));
+            snapshots
+                .wait_for(|snapshot| matches!(snapshot.session, SessionState::ScreenSync))
+                .await
+                .unwrap();
             engine.shutdown().await.unwrap();
 
-            // Nothing configured: the engine's validation error is shown.
             let (handle, engine, _) = start(MemoryStore::new()).await;
-            let failed = target(&handle, LightingTarget::ScreenSync).await;
-            assert_eq!(failed.severity, Severity::Error);
-            assert!(failed.text.contains("not configured"), "{}", failed.text);
+            let notice = execute(
+                handle.clone(),
+                read(),
+                Command::SetTarget(LightingTarget::ScreenSync),
+            )
+            .await;
+            assert_eq!(notice, Notice::info("Target screen_sync"));
+            let mut snapshots = handle.snapshot();
+            let failed = snapshots
+                .wait_for(|snapshot| snapshot.session.failure().is_some())
+                .await
+                .unwrap();
+            let failure = failed.session.failure().unwrap();
+            assert!(failure.to_string().contains("not configured"), "{failure}");
+            drop(failed);
             engine.shutdown().await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn power_cancels_a_request_waiting_for_lights() {
+        within_async(Duration::from_secs(5), async {
+            let mut settings = fakes::settings();
+            settings.output = Some(AdapterSettings::new(
+                FakeOutputs::KIND,
+                &FakeOutputSettings {
+                    name: "waiting".into(),
+                    unreachable_until: Some("device online".into()),
+                    ..FakeOutputSettings::default()
+                },
+            ));
+            let (handle, engine, log) = start(MemoryStore::with(settings)).await;
+            let mut snapshots = handle.snapshot();
+            let power = || execute(handle.clone(), read(), Command::Power);
+            assert_eq!(power().await, Notice::info("Power requested"));
+            snapshots
+                .wait_for(|snapshot| snapshot.control.waiting == Some(WaitingFor::Output))
+                .await
+                .unwrap();
+            assert!(log.wait_for("output.monitor", 1).await);
+
+            assert_eq!(power().await, Notice::info("Power requested"));
+            snapshots
+                .wait_for(|snapshot| {
+                    snapshot.target == LightingTarget::Off && snapshot.control.waiting.is_none()
+                })
+                .await
+                .unwrap();
+            log.record("device online");
+            engine.shutdown().await.unwrap();
+            assert_eq!(log.count("output.open:waiting"), 0);
+            assert_eq!(log.count("output.idle:waiting:Native"), 0);
         })
         .await;
     }
@@ -137,7 +207,6 @@ mod tests {
                 rejected.text
             );
 
-            // The reader's failure is shown with its cause.
             std::fs::write(&path, "{ not json").unwrap();
             let invalid = load(path).await;
             assert_eq!(invalid.severity, Severity::Error);

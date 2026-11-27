@@ -47,7 +47,6 @@ impl Flags {
         self.set_phase(SessionPhase::Running);
         let pumped = guarded("session loop", || {
             while !self.stop.load(Ordering::Acquire) {
-                // A failing source is the capture's failure.
                 match source
                     .next_frame(TICK)
                     .map_err(|error| error.in_section(Section::Capture))?
@@ -144,7 +143,11 @@ impl<T: Send + 'static> Worker<T> {
         })
     }
 
-    fn phase(&self) -> SessionPhase {
+    pub(crate) fn request_stop(&self) {
+        self.flags.0.request_stop();
+    }
+
+    pub(crate) fn phase(&self) -> SessionPhase {
         self.flags
             .0
             .phase

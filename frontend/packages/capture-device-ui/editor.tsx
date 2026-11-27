@@ -3,7 +3,6 @@ import { captureDefaults } from '@prysm/contracts/constants';
 import type { DeviceSettings } from '@prysm/contracts/host-desktop';
 import {
   DeviceRows,
-  nothingOffered,
   PictureChoice,
   presetRates,
   useCaptureModes,
@@ -19,7 +18,7 @@ export const typedDeviceMs = 400;
  * Prysm captures, or nothing at a preset's rate and size.
  */
 function problemOf(modes: ModesState) {
-  if (modes.state !== 'known' || !nothingOffered(modes)) return undefined;
+  if (modes.state !== 'known' || modes.offered.length > 0) return undefined;
   return modes.modes.length === 0
     ? 'This device offers no picture Prysm can use.'
     : `This device doesn’t offer ${presetRates} at a size Prysm can use.`;
@@ -52,35 +51,33 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
     onChange({ ...value, device: next });
   };
   return (
-    <DeviceRows
-      section="capture"
-      kind="device"
-      path="capture.device"
-      field="device"
-      legend="Device"
-      things="devices"
-      nothing="No devices found. Plug one in, or enter its path."
-      value={device}
-      text={value.device}
-      typed={typedDevice}
-      missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
-      problem={asked ? problemOf(modes) : undefined}
-      onPick={pick}
-      onType={(typed) => onChange({ ...value, device: typed })}
-      onLook={'again' in modes ? modes.again : undefined}
-      then={
-        // Nothing is drawn for a device that delivers nothing.
-        asked ? (
-          <PictureChoice
-            value={value}
-            defaults={captureDefaults.device}
-            onChange={onChange}
-            modes={modes}
-            source="This device"
-            unreachable="Plug in the device to choose its size and rate."
-          />
-        ) : null
-      }
-    />
+    <>
+      <DeviceRows
+        section="capture"
+        kind="device"
+        field="device"
+        legend="Device"
+        things="devices"
+        nothing="No devices found. Plug one in, or enter its path."
+        value={device}
+        text={value.device}
+        typed={typedDevice}
+        missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
+        problem={asked ? problemOf(modes) : undefined}
+        onPick={pick}
+        onType={(typed) => onChange({ ...value, device: typed })}
+        onLook={'again' in modes ? modes.again : undefined}
+      />
+      {asked ? (
+        <PictureChoice
+          value={value}
+          defaults={captureDefaults.device}
+          onChange={onChange}
+          modes={modes}
+          source="This device"
+          unreachable="Plug in the device to choose its size and rate."
+        />
+      ) : null}
+    </>
   );
 }

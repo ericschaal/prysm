@@ -21,8 +21,8 @@ use prysm_runtime::{NullOutput, NullSettings};
 use prysm_webos_link::{Fix, SlimLink, Video};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
-    ErrorKind, ErrorReply, GetStateRequest, SetEnabledRequest, SetTargetRequest, StateReply,
-    UninstallRequest,
+    ErrorKind, ErrorReply, GetStateRequest, SetEnabledRequest, SetTargetChoice, SetTargetRequest,
+    StateReply, UninstallRequest,
 };
 use prysm_webos_service::state::{
     Asked, FullWorker, Package, Power, Problem, SlimWorker, State as TvState,
@@ -137,6 +137,7 @@ fn luna() -> Value {
         // The TV refuses to share the video it shows.
         SlimLink::Refused {},
         SlimLink::Waiting { message: message() },
+        SlimLink::CaptureWaiting { message: message() },
         SlimLink::EncoderFailed { message: message() },
         SlimLink::VersionDiffers { message: message() },
         SlimLink::ReceiverFailed { message: message() },
@@ -186,6 +187,13 @@ fn luna() -> Value {
         (ErrorKind::Internal, "the service is busy"),
     ]
     .map(|(kind, text)| ErrorReply::new(kind, text));
+    let target_requests = [
+        SetTargetChoice::Off,
+        SetTargetChoice::ScreenSync,
+        SetTargetChoice::Effects,
+        SetTargetChoice::Remembered,
+    ]
+    .map(|target| SetTargetRequest { target });
     json!({
         "luna/State": states,
         "luna/Preferences": [Preferences::default(), slim_preferences],
@@ -194,8 +202,7 @@ fn luna() -> Value {
             StateReply::new(slim.clone(), None),
         ],
         "luna/GetStateRequest": [GetStateRequest { subscribe: true }],
-        "luna/SetTargetRequest": LightingTarget::ALL
-            .map(|target| SetTargetRequest { target }),
+        "luna/SetTargetRequest": target_requests,
         "luna/SetEnabledRequest": [SetEnabledRequest { enabled: false }],
         "luna/UninstallRequest": [UninstallRequest {}],
         "luna/ErrorReply": errors,

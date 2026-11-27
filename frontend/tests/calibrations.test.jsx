@@ -82,7 +82,6 @@ test('calibrations are rows; each opens its page, saved live, deleted with Undo'
     );
     assert.equal($('.save-status').textContent, 'All changes saved');
 
-    // A calibration's page: its name, whether it is in use, its correction.
     await openPage('PS5');
     assert.equal(window.location.hash, '#/settings/calibrations/ps5');
     assert.equal($('.page-heading h2').textContent, 'PS5');
@@ -151,7 +150,6 @@ test('calibrations are rows; each opens its page, saved live, deleted with Undo'
     assert.equal(processing(fixture).active_calibration, 'ps5');
     assert.equal(valueOf('Movie night'), 'Not in use');
 
-    // Undo is offered for a while; then the row only says what happened.
     await openPage('Game');
     t.mock.timers.enable({ apis: ['setTimeout'] });
     await click(button('Delete calibration'));

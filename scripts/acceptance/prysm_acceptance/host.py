@@ -460,6 +460,8 @@ class SshBinary(OnTarget):
         self.pid: int | None = None
         self.exit_code: int | str | None = None
         self.device_node: str | None = None
+        self._put_settings = commands.linux_put(self.target, self.run, RunFile.SETTINGS, str(self.settings_path))
+        self._launch = commands.linux_start(self.target, self.run, self.listen)
 
     def _run(self, command: Command, check: bool = True) -> Result:
         return self.transport.run(command, check=check)
@@ -482,8 +484,8 @@ class SshBinary(OnTarget):
                 if source == Source.FILE
                 else []
             ),
-            commands.linux_put(self.target, self.run, RunFile.SETTINGS, str(self.settings_path)),
-            commands.linux_start(self.target, self.run, self.listen),
+            self._put_settings,
+            self._launch,
             commands.linux_status(self.target, self.run),
         ]
         stop = [
@@ -555,8 +557,8 @@ class SshBinary(OnTarget):
 
     def start(self, document: Settings, seconds: float = 15) -> State:
         write_settings(self.settings_path, document)
-        self._run(commands.linux_put(self.target, self.run, RunFile.SETTINGS, str(self.settings_path)))
-        self._run(commands.linux_start(self.target, self.run, self.listen))
+        self._run(self._put_settings)
+        self._run(self._launch)
         state = wait_for_state(self.url, seconds, 0.3, self._running)
         if state is None:
             self.fetch()

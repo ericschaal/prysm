@@ -1,15 +1,12 @@
 import { useId, type CSSProperties, type ReactNode } from 'react';
 import { ledCount, type LedEdges } from './adapters';
 import { ledStops } from './live-colors';
-
-export type Edge = keyof LedEdges;
-export type Corner = 'bottom-left' | 'top-left' | 'top-right' | 'bottom-right';
-/** An edge's LEDs in the wiring: the corner they start from and end at. */
-export interface Wire {
-  edge: Edge;
-  from: Corner;
-  to: Corner;
-}
+import {
+  clockwiseWires,
+  type Corner,
+  type Edge,
+  type Wire,
+} from './led-wiring';
 
 type Point = readonly [number, number];
 
@@ -24,7 +21,6 @@ const out = 9;
 const inset = 6;
 /** Home's drawing, with room for the counts (the bottom one past the stand). */
 const home = { width: 320, height: 200 };
-/** Lowers 11px digits so they are centred on their point. */
 const digitDrop = 4;
 
 const cx = screen.x + screen.width / 2;
@@ -58,22 +54,7 @@ const screenBox = {
   borderRadius: `${percent(screenRadius, screen.width)} / ${percent(screenRadius, screen.height)}`,
 };
 const stand = `M${cx - 22} ${screen.y + screen.height + 26}h44`;
-/** Home's bands, each drawn clockwise. */
-const clockwise: readonly Wire[] = [
-  { edge: 'top', from: 'top-left', to: 'top-right' },
-  { edge: 'right', from: 'top-right', to: 'bottom-right' },
-  { edge: 'bottom', from: 'bottom-right', to: 'bottom-left' },
-  { edge: 'left', from: 'bottom-left', to: 'top-left' },
-];
-/** The way each edge's colours run: left to right, top to bottom. */
-const screenWay: Record<Edge, readonly [Corner, Corner]> = {
-  top: ['top-left', 'top-right'],
-  right: ['top-right', 'bottom-right'],
-  bottom: ['bottom-left', 'bottom-right'],
-  left: ['top-left', 'bottom-left'],
-};
-/** The corners in clockwise order, seen from the front. */
-const aroundClockwise = clockwise.map(({ from }) => from);
+const clockwise = Object.values(clockwiseWires);
 
 /** The band from one corner to the other, `out + inset` short of each. */
 function bandOf([x1, y1]: Point, [x2, y2]: Point) {
@@ -93,9 +74,11 @@ function wayOf({ from, to }: Wire) {
 /** Where LED 1 is and which way the strip runs from it, in words. */
 function directionOf(first: Wire | undefined) {
   if (!first) return 'No LEDs yet. Enter how many are on each edge.';
-  const next = (aroundClockwise.indexOf(first.from) + 1) % 4;
-  const turn =
-    aroundClockwise[next] === first.to ? 'clockwise' : 'anticlockwise';
+  const turn = clockwise.some(
+    ({ from, to }) => from === first.from && to === first.to,
+  )
+    ? 'clockwise'
+    : 'anticlockwise';
   return `First LED is ${first.from.replace('-', ' ')}. The strip runs ${turn}.`;
 }
 
@@ -121,7 +104,6 @@ export function LedDrawing({
   caption: string;
   /** Home only: HTML in the screen's box, clipped to its corners. */
   screen?: ReactNode;
-  /** Home only: one line under the drawing. */
   note?: ReactNode;
   editing?: {
     wiring: readonly Wire[];
@@ -198,7 +180,11 @@ export function LedDrawing({
           <g className="led-map-band">
             {clockwise.map(({ edge, from, to }) => {
               const band = bandOf(corners[from], corners[to]);
-              const [first, last] = screenWay[edge];
+              // Stream colors run left to right and top to bottom.
+              const gradient =
+                edge === 'bottom' || edge === 'left'
+                  ? bandOf(corners[to], corners[from])
+                  : band;
               const paint = `url(#${id}-${edge})`;
               return (
                 <g
@@ -209,7 +195,7 @@ export function LedDrawing({
                   <linearGradient
                     id={`${id}-${edge}`}
                     gradientUnits="userSpaceOnUse"
-                    {...bandOf(corners[first], corners[last])}
+                    {...gradient}
                   >
                     {Array.from({ length: ledStops }, (_, index) => (
                       <stop

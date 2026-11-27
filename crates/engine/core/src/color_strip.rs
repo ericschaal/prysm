@@ -9,16 +9,9 @@ pub struct ColorStrip {
 }
 
 /// A color strip needs at least one sample.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("color strip must have at least one sample")]
 pub struct EmptyColorStrip;
-
-impl std::fmt::Display for EmptyColorStrip {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("color strip must have at least one sample")
-    }
-}
-
-impl std::error::Error for EmptyColorStrip {}
 
 impl ColorStrip {
     /// Create a strip from linear color samples.
@@ -60,7 +53,7 @@ impl ColorStrip {
         &self.samples
     }
 
-    /// Check if the strip is empty (should never be true)
+    /// Returns whether the strip is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
@@ -93,31 +86,33 @@ impl ColorStrip {
     ///
     /// Returns `None` if `count` is zero or `index >= count`.
     #[must_use]
+    pub fn color_at(&self, index: usize, count: usize) -> Option<LinearColor> {
+        (index < count).then(|| self.resampled_color(index, count))
+    }
+
+    /// Iterate over `count` evenly spaced samples. A single sample uses the midpoint.
+    pub fn iter_resampled(&self, count: usize) -> impl DoubleEndedIterator<Item = LinearColor> {
+        (0..count).map(move |index| self.resampled_color(index, count))
+    }
+
     #[allow(
         clippy::cast_precision_loss,
         reason = "output indices become normalized floating-point interpolation positions"
     )]
-    pub fn color_at(&self, index: usize, count: usize) -> Option<LinearColor> {
-        if index >= count {
-            return None;
-        }
-        if count == self.samples.len() {
-            return Some(self.samples[index]);
-        }
-        let position = if count == 1 {
-            0.5
+    fn resampled_color(&self, index: usize, count: usize) -> LinearColor {
+        if count == self.len() {
+            self.samples[index]
+        } else if count == 1 {
+            self.sample_at(0.5)
         } else {
-            index as f32 / (count - 1) as f32
-        };
-        Some(self.sample_at(position))
+            self.sample_at(index as f32 / (count - 1) as f32)
+        }
     }
 
     /// Resample the strip into exactly N linear colors
     #[must_use]
     pub fn resample(&self, count: usize) -> Vec<LinearColor> {
-        let mut samples = Vec::with_capacity(count);
-        samples.extend((0..count).filter_map(|i| self.color_at(i, count)));
-        samples
+        self.iter_resampled(count).collect()
     }
 
     /// Blend two strips together with a ratio (0.0 = full self, 1.0 = full other)
@@ -128,23 +123,16 @@ impl ColorStrip {
 
     /// Combine two strips sample by sample, both resampled to the longer one's count.
     #[must_use]
-    #[allow(
-        clippy::missing_panics_doc,
-        reason = "indices are within the output count"
-    )]
     pub fn combine(
         &self,
         other: &ColorStrip,
         mut combine: impl FnMut(LinearColor, LinearColor) -> LinearColor,
     ) -> ColorStrip {
         let result_len = self.samples.len().max(other.samples.len());
-        let combined = (0..result_len)
-            .map(|i| {
-                combine(
-                    self.color_at(i, result_len).expect("bounded strip index"),
-                    other.color_at(i, result_len).expect("bounded strip index"),
-                )
-            })
+        let combined = self
+            .iter_resampled(result_len)
+            .zip(other.iter_resampled(result_len))
+            .map(|(a, b)| combine(a, b))
             .collect();
         Self {
             samples: Arc::new(combined),

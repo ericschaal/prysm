@@ -47,14 +47,15 @@ ends (see [architecture](architecture.md#shutdown-ordering)).
 
 ## Settings ownership
 
-- The settings file holds everything a user changes at run time: `capture`,
+- The settings file holds the adapter and picture configuration: `capture`,
   `output`, `processing` (with the style and calibrations). Format:
   [settings-file](../../crates/adapters/settings-file/README.md).
 - Process options (settings path, `--listen`, `--allow-origin`, `--metrics`,
   `--start`, `--log-file`) are command-line only and never in the file. There
   are no `PRYSM_*` environment variables.
-- The lighting mode is not saved. Hosts start with the lights off unless
-  started with `--start`.
+- The settings store persists the last selected mode beside its settings file.
+  Startup reconciles that mode with the device observation. An explicit
+  `--start` requests Screen sync.
 - Saves replace the whole document with the revision the client edited from;
   a stale revision is `409` and is never retried automatically. The browser
   copies the latest settings and replaces one section, so it keeps fields it
@@ -75,33 +76,22 @@ See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md
 
 ## Lighting transitions
 
-- **Off:** stop the session; the output is idled off after the last frame.
-- **WLED effects** (`effects`): stop the session; the output is idled
-  to the device's own state.
-- **Screen sync** (`screen_sync`): open the source (a failure is the reply),
-  then open the output at the first frame. An output that cannot open ends
-  the session and shows in `session.failure`.
+A target command updates intent. Observe the state stream for the result.
+`control.remembered` is the mode chosen by Power on. With
+`control.external` true, an existing stream was detected at startup and
+neither mode is selected. `control.power` is the latest known physical
+power, omitted when unknown. `control.busy` marks an in-flight power
+operation. `control.waiting` names a required adapter awaiting recovery.
 
-The session reached the target when `session.state` equals it (`stopped` for
-`off`). A failure lives in the session it explains (`stopped`, `effects` or
-`unanswered`; `screen_sync` has none), and a failure of what a command replaced is only
-logged. While stopped with an output failure (the lights may not be off,
-whichever target failed), `off` asked switches them off again; with the
-target `off`, a save that does nothing about the output keeps the failure,
-and saving other lights ends it.
+- Off cancels pending starts and attempts power-off once if needed.
+- Effects requires the output. It powers the device if needed and delegates
+  the display to it. A detected explicit override during Screen sync also
+  selects Effects.
+- Screen sync requires both adapters. Capture opens before output. Losing
+  either stops both and attempts to turn the lights off. A recoverable
+  request resumes after cleanup when both adapters are ready. A blocker or
+  unsafe local release prevents further starts.
 
-There is no confirmation window and no rollback to the previous mode after a
-failed start. A failure leaves the target as requested. Without frames for 3 s
-the output returns to the device's own state until frames return; WLED
-problems while running (switched off, live override, another sender, no
-answer) show as `device.issue`, and Prysm does not switch WLED back. Lights
-that do not answer the output's open are `unreachable` too, not a failure:
-lighting keeps running and tries the open again every 5 s. With the target
-`off` or `effects` the same holds without a session: lights that do not answer
-the request that puts them in that mode leave `session.state` `unanswered`
-and `device.issue` `unreachable`; the target stays and the request is tried
-again every 5 s until they answer. Saved settings that could not be read or
-do not validate are said beside the wait, as its `failure`.
 `device.brightness_percent` (`40`) is WLED's own brightness while it scales
 Prysm's colours; Prysm reports it and never changes it. `device.led_count`
 (`120`) is how many LEDs WLED itself says it has; Prysm keeps sending the

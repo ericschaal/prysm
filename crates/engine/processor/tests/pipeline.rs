@@ -107,7 +107,6 @@ fn edge_highlights_keep_local_contrast_and_interior_lights_still_contribute() {
         let edges = [&colors.top, &colors.right, &colors.bottom, &colors.left];
         if edge < 4 {
             let nearby = edges[edge].sample_at(0.5).r;
-            // A 24px highlight should retain useful contrast, not become a faint room wash.
             assert!(nearby > 0.25, "edge {edge}: highlight reduced to {nearby}");
             assert!(
                 nearby < 0.8,
@@ -115,7 +114,6 @@ fn edge_highlights_keep_local_contrast_and_interior_lights_still_contribute() {
             );
             assert!(nearby > edges[edge].sample_at(0.0).r * 10.0);
         } else {
-            // Keep a measurable scene contribution, not just a mathematically nonzero tail.
             assert!(colors.top.sample_at(0.5).r > 0.001);
             assert!(colors.bottom.sample_at(0.5).r > 0.001);
             assert!(colors.left.sample_at(0.5).r > 0.0003);

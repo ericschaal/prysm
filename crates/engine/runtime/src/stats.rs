@@ -30,9 +30,8 @@ pub struct Counters {
     pub output_write_failures: u64,
     /// Capture sources opened by starting lighting.
     pub source_opens: u64,
-    /// Outputs opened to show colors: at a session's first frame, at the
-    /// first frame after a release, and when lights that did not answer do.
-    /// Opens that failed are not counted.
+    /// Streaming outputs opened during session initialization or when video
+    /// returns after a quiet release. Failed opens are excluded.
     pub output_opens: u64,
 }
 
@@ -111,9 +110,7 @@ impl Stats {
         let flushed = times.written.map(|written| {
             (
                 written - times.received,
-                // The first frame waited for nothing that counts.
                 written - times.previous_done.unwrap_or(times.received),
-                // Capture to received: the part before Prysm.
                 times
                     .captured
                     .map(|captured| times.received.saturating_duration_since(captured)),
@@ -202,7 +199,6 @@ mod tests {
         let start = Instant::now();
         let mut previous_done = None;
         for frame in 0..3 {
-            // A frame every 60 ms, done 20 ms after it arrives.
             let received = start + ms(60) * frame;
             let written = received + ms(20);
             stats.frame(FrameTimes {
@@ -216,8 +212,6 @@ mod tests {
         }
         let totals = stats.totals();
         assert_eq!(totals.counters.flushed.total, ms(60), "busy 20 ms a frame");
-        // The first frame waited for nothing; each later one 40 ms.
-        // so `meter`'s verdict sees 60 of 140 ms busy: slack.
         assert_eq!(totals.cycles.total, ms(20) + 2 * ms(60));
     }
 

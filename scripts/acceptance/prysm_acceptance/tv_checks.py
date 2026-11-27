@@ -29,8 +29,9 @@ from prysm_acceptance.host import Host, Sender, shown
 from prysm_acceptance.host_cells import Clip, Record, screen_sync
 from prysm_acceptance.options import Flavour, TvCell
 from prysm_acceptance.prysm_api import Prysm, SessionState, Target, near, rates
-from prysm_acceptance.tv import Encoding, Power, Tv, Video
+from prysm_acceptance.tv import Power, Tv, Video
 from prysm_acceptance.web import JsonObject
+from prysm_acceptance.wire_generated import Encoding
 from prysm_acceptance.wled_api import Wled
 
 # The capture every cell starts with, and the soaks (width, height, fps): the full package captures at each

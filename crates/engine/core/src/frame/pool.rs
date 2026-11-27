@@ -1,49 +1,25 @@
 //! Producer-owned pixel-buffer recycling and exclusive writes before publication.
 use super::{Frame, FrameError, PixelFormat};
-use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 /// Why [`FramePool::copy_from_strided`] made no frame of a payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PayloadError {
     /// The source flagged the payload as corrupted.
+    #[error("source flagged the buffer as corrupted")]
     Corrupted,
     /// Zero width or height: no pixels to show.
+    #[error("buffer describes a frame without pixels")]
     Empty,
     /// The format cannot hold this geometry.
-    Geometry(FrameError),
+    #[error("buffer geometry is not a frame")]
+    Geometry(#[source] FrameError),
     /// Rows `stride` bytes apart overlap rows of `row` bytes.
+    #[error("buffer rows are {stride} bytes apart, closer than a {row}-byte row")]
     Stride { stride: usize, row: usize },
     /// `bytes` of the `frame` bytes from the first pixel to the last.
+    #[error("buffer held {bytes} of the {frame} bytes of a frame")]
     Short { bytes: usize, frame: usize },
-}
-
-impl Display for PayloadError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Corrupted => f.write_str("source flagged the buffer as corrupted"),
-            Self::Empty => f.write_str("buffer describes a frame without pixels"),
-            Self::Geometry(_) => f.write_str("buffer geometry is not a frame"),
-            Self::Stride { stride, row } => {
-                write!(
-                    f,
-                    "buffer rows are {stride} bytes apart, closer than a {row}-byte row"
-                )
-            }
-            Self::Short { bytes, frame } => {
-                write!(f, "buffer held {bytes} of the {frame} bytes of a frame")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PayloadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Geometry(error) => Some(error),
-            _ => None,
-        }
-    }
 }
 
 /// Producer-owned storage for up to four reusable pixel buffers.
@@ -179,12 +155,7 @@ impl FramePool {
         if width == 0 || height == 0 {
             return Err(PayloadError::Empty);
         }
-        format
-            .expected_size(width, height)
-            .map_err(PayloadError::Geometry)?;
-        let overflow = || PayloadError::Geometry(FrameError::SizeOverflow);
-        // NV12's chroma plane follows the luma rows at the same stride.
-        let (row_size, rows) = format.rows(width, height).ok_or_else(overflow)?;
+        let (row_size, rows) = format.rows(width, height).map_err(PayloadError::Geometry)?;
         if stride < row_size {
             return Err(PayloadError::Stride {
                 stride,
@@ -194,7 +165,7 @@ impl FramePool {
         let required = stride
             .checked_mul(rows - 1)
             .and_then(|start| start.checked_add(row_size))
-            .ok_or_else(overflow)?;
+            .ok_or(PayloadError::Geometry(FrameError::SizeOverflow))?;
         if data.len() < required {
             return Err(PayloadError::Short {
                 bytes: data.len(),
@@ -204,12 +175,13 @@ impl FramePool {
         let mut frame = self
             .acquire(width, height, format)
             .map_err(PayloadError::Geometry)?;
+        let pixels = frame.as_mut_slice();
         if stride == row_size {
-            frame.as_mut_slice().copy_from_slice(&data[..required]);
-            return Ok(frame.finish());
-        }
-        for (row, target) in frame.as_mut_slice().chunks_exact_mut(row_size).enumerate() {
-            target.copy_from_slice(&data[row * stride..row * stride + row_size]);
+            pixels.copy_from_slice(&data[..required]);
+        } else {
+            for (target, source) in pixels.chunks_exact_mut(row_size).zip(data.chunks(stride)) {
+                target.copy_from_slice(&source[..row_size]);
+            }
         }
         Ok(frame.finish())
     }

@@ -38,8 +38,9 @@ impl CalibrationPattern {
     }
 }
 
-/// A calibration pattern. The wire names are the TV pattern clips' names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A calibration pattern, by its TV clip name.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::VariantArray)]
 #[serde(rename_all = "snake_case")]
 pub enum Pattern {
     /// Light gray (192) full screen: white balance (warmth, tint).
@@ -70,22 +71,7 @@ pub enum Pattern {
 }
 
 impl Pattern {
-    pub const ALL: [Self; 14] = [
-        Self::Gray192,
-        Self::Red,
-        Self::Yellow,
-        Self::Green,
-        Self::Cyan,
-        Self::Blue,
-        Self::Magenta,
-        Self::BluePair,
-        Self::RedPair,
-        Self::GreenPair,
-        Self::Coast,
-        Self::Garden,
-        Self::Dusk,
-        Self::ReviewGrid,
-    ];
+    pub const ALL: [Self; 14] = *<Self as strum::VariantArray>::VARIANTS.as_array().unwrap();
 }
 
 #[cfg(test)]

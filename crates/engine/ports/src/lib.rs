@@ -2,8 +2,10 @@
 //!
 //! Adapters are plain blocking objects owned by one session thread. They contain
 //! no channels, identities or lifecycle state: opening is construction, and the
-//! consuming `close`/`idle` calls release exactly once.
+//! consuming `close`/`release` calls release exactly once. The pure
+//! [`AdapterLifecycle`] models readiness and the ownership of those effects.
 mod adapter;
+mod availability;
 mod calibration;
 mod calibrations;
 pub mod capture_size;
@@ -25,6 +27,10 @@ pub use adapter::{
     DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull,
     SettingsStore, SourceStop,
 };
+pub use availability::{
+    AdapterLifecycle, Availability, Claim, OpenIntent, OutputDisplay, OutputObservation,
+    OutputObservationState, OutputOpen, OutputRelease, Power, Readiness, Release,
+};
 pub use calibration::{CalibrationPattern, Pattern};
 pub use calibrations::{
     Calibration, CorrectionControls, MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS,
@@ -38,16 +44,19 @@ pub use handoff::{
 };
 pub use hangup::{CallError, Hangup, Registration, Stopping};
 pub use modes::{Mode, Modes, Span};
+#[cfg(feature = "schema")]
+pub use modes::{ModesFields as ModesSchema, SpanFields as SpanSchema};
 pub use owner::{OwnerThread, Wakeup, Worker};
 pub use recovery::{Escalation, Fix};
 pub use registry::{
-    Candidate, OpenFailure, OutputFactory, Registry, SOURCE_OPEN_LIMIT, SourceFactory,
+    Candidate, ConfiguredAdapter, ConfiguredOutput, ConfiguredSource, OpenFailure, OutputFactory,
+    Registry, SOURCE_OPEN_LIMIT, SourceFactory,
 };
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use snapshot::{
-    Behind, DeviceReport, Input, Latency, LightingTarget, Picture, SessionPhase, SessionState,
-    Snapshot,
+    Behind, DeviceReport, Input, Latency, LightingControl, LightingMode, LightingTarget, Picture,
+    SessionPhase, SessionState, Snapshot, WaitingFor,
 };
 pub use style::{Style, StyleValues};
 

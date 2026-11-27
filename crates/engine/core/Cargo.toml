@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Core colour, frame and processing types for Prysm"
 
 [dependencies]
+thiserror.workspace = true
 yuv = { version = "0.8.20", features = ["fast_mode"] }
 
 [features]

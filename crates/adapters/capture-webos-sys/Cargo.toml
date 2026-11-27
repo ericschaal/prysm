@@ -9,6 +9,7 @@ description = "LG webOS VTCapture and HAL GAL FFI behind safe, single-threaded c
 [dependencies]
 libloading.workspace = true
 libc = "0.2"
+strum.workspace = true
 thiserror.workspace = true
 # The one Luna binding: the registration precheck.
 prysm-webos-luna-sys.workspace = true

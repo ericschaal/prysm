@@ -1,41 +1,12 @@
-// The library has no unsafe code; only the example's allocator does.
 #![forbid(unsafe_code)]
-use frames::{FrameView, Viewport};
-use pipeline::Pipeline;
-use prysm_core::{Config, EdgeColors, Frame, PixelFormat};
-use std::num::NonZeroUsize;
-use std::time::Instant;
-use workers::Workers;
-
 mod frames;
 mod nodes;
 mod pipeline;
 mod workers;
 
+pub use frames::{SampleError, sample_rgb};
 pub use nodes::cut_strength;
-
-/// Stateful frame processor.
-///
-/// Detection keeps the raw capture format; sampling reads RGB, YUYV and NV12 in
-/// place, without a full-frame conversion, before reducing the picture to a grid
-/// and projecting onto the perimeter.
-/// Colour focus, when set, then lets each sample keep the hue next to it.
-/// Pictures above 640x360 are averaged on a lattice of every nth pixel and row
-/// and get the grid and the samples of their copy scaled down to 640x360, so
-/// sampling costs about the same at any capture size.
-///
-/// Cell averaging and colour focus may run on a small dedicated thread pool
-/// owned by the processor (see [`Self::with_threads`]); each call still
-/// returns only when its frame is done, with the same colours on any number
-/// of threads.
-#[derive(Debug)]
-pub struct PrysmProcessor {
-    config: Config,
-    pipeline: Pipeline,
-    layout: Option<FrameLayout>,
-    last_viewport: Option<Viewport>,
-    workers: Workers,
-}
+pub use pipeline::PrysmProcessor;
 
 /// A pipeline stage, as [`PrysmProcessor::process_frame_staged`] reports it.
 #[doc(hidden)]
@@ -55,150 +26,14 @@ pub enum Stage {
     Output,
 }
 
-/// A layout change restarts black-bar detection and temporal history.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct FrameLayout {
-    width: u32,
-    height: u32,
-    format: PixelFormat,
-}
-
-impl FrameLayout {
-    /// Whether frames of this layout can be sampled: empty frames cannot.
-    fn is_sampled(self) -> bool {
-        self.width > 0 && self.height > 0
-    }
-}
-
-impl PrysmProcessor {
-    /// A processor that samples on half the machine's cores, at most three
-    /// threads, so the rest of the system keeps the other half; below four
-    /// cores it uses the calling thread alone.
-    pub fn new(config: &Config) -> Self {
-        Self::with_threads(config, Workers::automatic_threads())
-    }
-
-    /// A processor that samples on `threads` dedicated pool threads, never
-    /// rayon's global pool. With one thread it creates no pool and runs on
-    /// the calling thread. The pool's threads end when the processor is dropped.
-    pub fn with_threads(config: &Config, threads: NonZeroUsize) -> Self {
-        Self {
-            config: *config,
-            pipeline: Pipeline::new(config),
-            layout: None,
-            last_viewport: None,
-            workers: Workers::new(threads),
-        }
-    }
-
-    /// Confirmed sampling area of the last supported frame, in source pixels.
-    #[must_use]
-    pub fn viewport(&self) -> Option<Viewport> {
-        self.last_viewport
-    }
-
-    /// Apply processing settings without discarding unrelated temporal history.
-    /// Call this when configuration changes, before processing the next frame.
-    pub fn configure(&mut self, config: &Config) {
-        self.pipeline.configure(config);
-        self.config = *config;
-    }
-
-    /// Process a single frame using the current monotonic time for smoothing.
-    #[cfg(feature = "testkit")]
-    pub fn process_frame(&mut self, frame: Frame) -> EdgeColors {
-        self.process_frame_at(frame, Instant::now())
-    }
-
-    /// Process a frame at an explicit monotonic time, for deterministic replay.
-    /// Both black-bar confirmation and smoothing use this clock.
-    /// Use a shared clock origin plus source timestamps when replaying video.
-    /// Repeated or earlier times do not advance smoothing.
-    pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
-        self.process_frame_staged(frame, now, |_| {})
-    }
-
-    /// [`Self::process_frame_at`], calling `mark` as each stage that ran
-    /// ends, in pipeline order: a timing hook for the processor benchmark.
-    #[doc(hidden)]
-    pub fn process_frame_staged(
-        &mut self,
-        frame: Frame,
-        now: Instant,
-        mut mark: impl FnMut(Stage),
-    ) -> EdgeColors {
-        let layout = FrameLayout {
-            width: frame.width(),
-            height: frame.height(),
-            format: frame.format(),
-        };
-        if self.layout != Some(layout) {
-            self.pipeline.reset();
-            self.last_viewport = None;
-            self.layout = Some(layout);
-            if !layout.is_sampled() {
-                tracing::error!(
-                    "Empty frames, shown as black: {} {}x{}",
-                    layout.format,
-                    layout.width,
-                    layout.height
-                );
-            }
-        }
-
-        let mut edge_colors = if layout.is_sampled() {
-            self.sample(frame, now, &mut mark)
-        } else {
-            EdgeColors::black(layout.width, layout.height, self.config.sample_density)
-        };
-
-        if let Some(output) = &self.pipeline.output {
-            for strip in [
-                &mut edge_colors.top,
-                &mut edge_colors.right,
-                &mut edge_colors.bottom,
-                &mut edge_colors.left,
-            ] {
-                strip.map_colors(|color| output.apply(color));
-            }
-            mark(Stage::Output);
-        }
-        edge_colors
-    }
-
-    /// The stages before the output: black bars, sampling and smoothing.
-    fn sample(&mut self, frame: Frame, now: Instant, mut mark: impl FnMut(Stage)) -> EdgeColors {
-        let pipeline = &mut self.pipeline;
-        let mut view = FrameView::new(frame);
-        if let Some(detector) = &mut pipeline.detector {
-            view = detector.process(view, now);
-            mark(Stage::BlackBars);
-        }
-        self.last_viewport = Some(view.viewport);
-        let mut edge_colors =
-            pipeline
-                .sampler
-                .process_with(&view, &self.config, &self.workers, &mut mark);
-        if let Some(smoother) = &mut pipeline.smoother {
-            edge_colors = smoother.process(edge_colors, now);
-            mark(Stage::Smoothing);
-        }
-        edge_colors
-    }
-}
-
-impl Default for PrysmProcessor {
-    fn default() -> Self {
-        Self::new(&Config::default())
-    }
-}
-
 #[cfg(test)]
 mod thread_tests {
     use super::*;
     use prysm_core::{
-        ColorFocusPercent, SampleDensity, SpatialReachPercent, YuvRange, YuvStandardMatrix,
+        ColorFocusPercent, Config, Frame, PixelFormat, SampleDensity, SpatialReachPercent,
+        YuvRange, YuvStandardMatrix,
     };
+    use std::{num::NonZeroUsize, time::Instant};
 
     /// A letterboxed NV12 picture of gradients and noise that moves with `seed`.
     fn nv12(width: u32, height: u32, seed: u32) -> Frame {
@@ -308,7 +143,9 @@ mod thread_tests {
 #[cfg(test)]
 mod correction_tests {
     use super::*;
-    use prysm_core::{ColorCorrection, LinearColor};
+    use prysm_core::{ColorCorrection, Config, Frame, LinearColor, PixelFormat};
+    use std::time::Instant;
+
     #[test]
     fn live_calibration_changes_precede_brightness_and_do_not_retain_previous_correction() {
         let mut config = Config {

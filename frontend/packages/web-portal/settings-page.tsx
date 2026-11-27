@@ -2,61 +2,32 @@ import {
   pictureOf,
   type AdapterSide,
   type ApplicationSnapshot,
-  type DiscoveryClient,
 } from '@prysm/application-client';
-import type { Processing } from '@prysm/contracts/application';
-import {
-  adapterFor,
-  ledCount,
-  unbroken,
-  type AdapterSection,
-  type AdapterUis,
-} from './adapters';
+import { useNav, usePortal } from './portal-context';
+import { ledCount, setupPart, unbroken, type SetupPart } from './adapters';
 import { saveDeveloper, useDeveloper } from './developer';
 import { useDeviceName } from './device-name';
 import { CheckboxField } from './fields';
 import { FieldScopeProvider, useFieldErrors, useFieldScope } from './form';
+import type { ProcessingEditor } from './live-processing';
 import { BlackBars } from './processing';
 import { Group, RowFact, RowLink, RowSwitch } from './rows';
-import { styles } from './styles';
+import { styleOf, styles } from './styles';
 import { currentTheme, themeChoices } from './theme';
 
-/** Where a row of the Settings page goes. */
-export type SettingsPlace =
-  | 'video'
-  | 'lights'
-  | 'calibrations'
-  | 'style'
-  | 'detail'
-  | 'appearance'
-  | 'about'
-  | 'setup';
-
-/**
- * The video source or the lights, as one row: named by discovery when it
- * can be, with its few facts, or its live problem in their place.
- */
-function SetupRow<S extends AdapterSection>({
-  section,
-  adapters,
-  saved,
-  discovery,
+function SetupRow({
+  part,
+  label,
   problem,
   open,
 }: {
-  section: AdapterSide;
-  adapters: AdapterUis<S>;
-  saved: S;
-  discovery: DiscoveryClient | null;
+  part: SetupPart;
+  label: string;
   problem: string | null;
   open: () => void;
 }) {
-  const adapter = adapterFor(adapters, saved.kind);
-  const label = adapter?.label ?? saved.kind;
-  const facts = adapter?.facts?.(saved) ?? [];
-  const name = useDeviceName(discovery, { section, saved, label, facts });
-  // The lights by their LED count, as on Home; a source by size and rate.
-  const edges = adapter?.edges?.(saved);
+  const { facts, edges } = part;
+  const name = useDeviceName(part);
   const details = edges
     ? [`${ledCount(edges)} LEDs`]
     : facts
@@ -66,7 +37,7 @@ function SetupRow<S extends AdapterSection>({
   const shownName = unbroken(name);
   return (
     <RowLink
-      label={section === 'capture' ? 'Video source' : 'Lights'}
+      label={label}
       value={[shownName, ...details].join(' · ')}
       lead={shownName}
       problem={problem}
@@ -75,46 +46,15 @@ function SetupRow<S extends AdapterSection>({
   );
 }
 
-export interface SettingsPageProps<
-  C extends AdapterSection,
-  O extends AdapterSection,
-> {
-  captures: AdapterUis<C>;
-  outputs: AdapterUis<O>;
-  snapshot: ApplicationSnapshot<C, O>;
-  online: boolean;
-  discovery: DiscoveryClient | null;
-  /** The live problem of each side, in plain words; `null` while it works. */
-  problemAt: (section: AdapterSide) => string | null;
-  /** Save the processing section; light with one while a slider is held. */
-  save: (expected: number, processing: Processing) => Promise<number>;
-  tryProcessing: (processing: Processing) => Promise<unknown>;
-  /** Go to another page. */
-  open: (place: SettingsPlace) => void;
-}
-
-/**
- * Settings: one column of rows in three groups. Setup (the video source and
- * the lights, each changed on its own page), Picture (style, calibrations,
- * detail, black bars) and this device. Everything here saves as it changes.
- */
-export function SettingsPage<
-  C extends AdapterSection,
-  O extends AdapterSection,
->({
-  captures,
-  outputs,
-  snapshot,
-  online,
-  discovery,
-  problemAt,
-  save,
-  tryProcessing,
-  open,
-}: SettingsPageProps<C, O>) {
-  const { settings, revision } = snapshot;
-  const capture = settings.capture ?? null;
-  const output = settings.output ?? null;
+export function SettingsPage({ live }: { live: ProcessingEditor }) {
+  const {
+    snapshot: { settings },
+    host,
+    problemAt,
+    openSetup,
+  } = usePortal();
+  const { go } = useNav();
+  const style = styleOf(settings.processing.style.kind);
   const processing = settings.processing;
   const calibrations = processing.calibrations ?? [];
   const active = calibrations.find(
@@ -124,90 +64,71 @@ export function SettingsPage<
   if (calibrations.length)
     calibrationLine = `${calibrations.length} ${calibrations.length === 1 ? 'calibration' : 'calibrations'} · ${active ? `${active.name} in use` : 'none in use'}`;
   const theme = themeChoices.find(({ value }) => value === currentTheme());
+
+  function setupRow(section: AdapterSide) {
+    const saved = settings[section];
+    const capture = section === 'capture';
+    const label = capture ? 'Video source' : 'Lights';
+    const open = () => go(capture ? 'video' : 'lights');
+    if (!saved)
+      return <RowLink label={label} value="Not set up yet" onClick={open} />;
+    const panels = capture ? host.captures : host.outputs;
+    return (
+      <SetupRow
+        label={label}
+        part={setupPart(section, panels, saved)}
+        problem={problemAt(section)}
+        open={open}
+      />
+    );
+  }
   return (
     <>
       <Group title="Setup">
-        {capture ? (
-          <SetupRow
-            section="capture"
-            adapters={captures}
-            saved={capture}
-            discovery={discovery}
-            problem={problemAt('capture')}
-            open={() => open('video')}
-          />
-        ) : (
-          <RowLink
-            label="Video source"
-            value="Not set up yet"
-            onClick={() => open('video')}
-          />
-        )}
-        {output ? (
-          <SetupRow
-            section="output"
-            adapters={outputs}
-            saved={output}
-            discovery={discovery}
-            problem={problemAt('output')}
-            open={() => open('lights')}
-          />
-        ) : (
-          <RowLink
-            label="Lights"
-            value="Not set up yet"
-            onClick={() => open('lights')}
-          />
-        )}
+        {setupRow('capture')}
+        {setupRow('output')}
       </Group>
       <Group title="Picture">
         <RowLink
           label="Style"
-          value={styles[processing.style.kind].label}
-          onClick={() => open('style')}
+          value={style ? styles[style].label : 'Unknown style'}
+          onClick={() => go('style')}
         />
         <RowLink
           label="Calibrations"
           value={calibrationLine}
-          onClick={() => open('calibrations')}
+          onClick={() => go('calibrations')}
         />
         <RowLink
           label="Detail"
           value="How closely the lights follow small details"
-          onClick={() => open('detail')}
+          onClick={() => go('detail')}
         />
         <RowSwitch>
-          <BlackBars
-            processing={processing}
-            revision={revision}
-            disabled={!online}
-            save={save}
-            tryProcessing={tryProcessing}
-          />
+          <BlackBars live={live} />
         </RowSwitch>
       </Group>
       <Group title="This device">
         <RowLink
           label="Appearance"
           value={theme?.label ?? 'System'}
-          onClick={() => open('appearance')}
+          onClick={() => go('appearance')}
         />
         <RowLink
           label="About this Prysm"
           value="Status, version and developer options"
-          onClick={() => open('about')}
+          onClick={() => go('about')}
         />
         <RowLink
           label="Start over with setup"
           value="Choose the video source and lights again, step by step"
-          onClick={() => open('setup')}
+          onClick={openSetup}
         />
       </Group>
     </>
   );
 }
 
-/** The lighting mode and session, in words. */
 const targetLabels = {
   off: 'Off',
   screen_sync: 'Screen sync',
@@ -229,7 +150,6 @@ const sessionLabels = {
   string
 >;
 
-/** What this Prysm is doing, and the developer options of this browser. */
 export function AboutPage({
   snapshot,
 }: {

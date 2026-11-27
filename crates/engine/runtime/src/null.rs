@@ -1,6 +1,7 @@
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    Hangup, IdleMode, LedOutput, OpenFailure, OutputFactory, Result, ValidationError,
+    Hangup, LedOutput, OpenFailure, OpenIntent, OutputFactory, OutputOpen, Power, Result,
+    ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -55,12 +56,17 @@ impl OutputFactory for NullOutput {
         }
     }
 
-    fn open(
+    fn open_for_sync(
         &self,
         _settings: &NullSettings,
+        _intent: OpenIntent,
         _stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
-        Ok(Box::new(NullLeds))
+    ) -> Result<OutputOpen, OpenFailure> {
+        Ok(OutputOpen::Streaming(Box::new(NullLeds)))
+    }
+
+    fn set_power(&self, _: &NullSettings, _: Power, _: &Hangup) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -70,16 +76,12 @@ impl LedOutput for NullLeds {
     fn write(&mut self, _colors: &EdgeColors) -> Result<()> {
         Ok(())
     }
-
-    fn idle(self: Box<Self>, _mode: IdleMode, _stop: &Hangup) -> Result<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::{AdapterSettings, Registry, Settings};
+    use prysm_ports::{AdapterSettings, IdleMode, OutputRelease, Registry, Settings};
 
     #[test]
     fn null_output_accepts_writes_and_idles_and_rejects_fields() {
@@ -93,15 +95,24 @@ mod tests {
         registry.validate(&settings).unwrap();
 
         let never = Hangup::default();
-        let mut output = registry.open_output(&null, &never).unwrap();
+        let OutputOpen::Streaming(mut output) = registry
+            .output(&null)
+            .unwrap()
+            .open(OpenIntent::Resume, &never)
+            .unwrap()
+        else {
+            panic!("null output never hands off");
+        };
         output.write(&EdgeColors::default()).unwrap();
-        output.idle(IdleMode::Native, &never).unwrap();
+        output
+            .release(OutputRelease::Ordinary(IdleMode::Native), &never)
+            .unwrap();
 
         let extra = NullSettings(BTreeMap::from([("host".into(), ())]));
         let error = NullOutput.validate(&extra).unwrap_err();
         assert_eq!(error.field, "host");
         let extra = AdapterSettings::new(NullOutput::KIND, &extra);
-        assert!(registry.open_output(&extra, &never).is_err());
+        assert!(registry.output(&extra).is_err());
     }
 
     #[cfg(feature = "schema")]

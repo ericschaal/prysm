@@ -22,6 +22,11 @@ import {
 import { pathOf, sectionStatus } from '../packages/web-portal/section-state';
 import { $, navigated, renderPortal } from './dom';
 
+function sectionPortal(snapshot) {
+  const lighting = lightingSituation(snapshot);
+  return { online: true, snapshot, lighting, path: pathOf(lighting) };
+}
+
 const failure = { kind: 'adapter', message: 'WLED cannot be reached' };
 const invalid = {
   kind: 'invalid',
@@ -283,7 +288,7 @@ test('each situation has one headline and one sentence', () => {
   // Lights that don't answer: screen sync's headline, and what happens
   // once they answer.
   for (const [target, sentence] of [
-    ['off', 'The lights switch off as soon as they answer.'],
+    ['off', 'Power off could not be confirmed.'],
     ['effects', 'WLED effects start as soon as the lights answer.'],
   ])
     assert.deepEqual(
@@ -310,6 +315,7 @@ test('each situation has one headline and one sentence', () => {
 
 const facts = (lighting, change = {}) => ({
   target: 'screen_sync',
+  control: { remembered: 'screen_sync', external: false, busy: false },
   lighting,
   device: {},
   hasCapture: true,
@@ -318,7 +324,6 @@ const facts = (lighting, change = {}) => ({
   ...change,
 });
 const memory = (change = {}) => ({
-  remembered: 'screen_sync',
   error: null,
   lit: false,
   note: null,
@@ -378,16 +383,18 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     'Something went wrong.',
     'what a newer target tried is not known',
   );
-  // A known target chooses its tile.
   assert.equal(
     lightCardView(facts(sync, { target: 'effects' }), memory()).chosen,
     'effects',
   );
-  const faulted = lightCardView(facts({ kind: 'faulted', message }), memory());
+  const faulted = lightCardView(
+    facts({ kind: 'faulted', message }, { target: 'off' }),
+    memory(),
+  );
   assert.deepEqual(
     [faulted.word, faulted.status, faulted.info],
     [
-      'Stopped',
+      'Off',
       'Prysm stopped responding',
       {
         tone: 'problem',
@@ -423,7 +430,6 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     text: 'The lights aren’t responding.',
     details: 'gone',
   });
-  // A start of screen sync that failed from the effects: they are still on.
   const fromEffects = lightCardView(
     facts({ ...failed, at: null, fromEffects: true, effectsOn: true }),
     memory(),
@@ -495,7 +501,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   const stopped = lightCardView(facts(failed), memory());
   assert.deepEqual(
     [stopped.word, stopped.palette, stopped.calm],
-    ['Stopped', 'error', ''],
+    ['On', 'error', ''],
   );
   assert.deepEqual(stopped.info, {
     tone: 'problem',
@@ -503,7 +509,6 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     details: 'WLED cannot be reached',
     retry: true,
   });
-  // A refused click with nothing failed in the state: said, without Try again.
   const refused = lightCardView(
     facts({ kind: 'off', failure: null }, { target: 'off' }),
     memory({
@@ -517,17 +522,30 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   assert.equal(refused.info.retry, false);
   // Off: the chosen mode is the remembered one, if it can run.
   const off = lightCardView(
-    facts({ kind: 'off', failure: null }, { target: 'off' }),
-    memory({ remembered: 'effects' }),
+    facts(
+      { kind: 'off', failure: null },
+      {
+        target: 'off',
+        control: { remembered: 'effects', external: false, busy: false },
+      },
+    ),
+    memory(),
   );
   assert.deepEqual(
     [off.mode, off.calm],
     ['effects', 'Power turns on WLED effects.'],
   );
-  assert.equal(off.ownEffects, true);
+  assert.equal(off.ownEffects, false);
   const noEffects = lightCardView(
-    facts({ kind: 'off', failure: null }, { target: 'off', output: {} }),
-    memory({ remembered: 'effects' }),
+    facts(
+      { kind: 'off', failure: null },
+      {
+        target: 'off',
+        output: {},
+        control: { remembered: 'effects', external: false, busy: false },
+      },
+    ),
+    memory(),
   );
   assert.equal(noEffects.mode, 'screen_sync');
   assert.equal(noEffects.calm, 'Power turns on Screen sync.');
@@ -550,7 +568,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     [
       'off',
       'screen_sync',
-      'Can’t reach the lights. The lights switch off as soon as they answer.',
+      'Can’t reach the lights. Power off could not be confirmed.',
     ],
     [
       'effects',
@@ -568,7 +586,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     assert.deepEqual(
       [view.word, view.on, view.chosen, view.status, view.info, view.calm],
       [
-        'Off',
+        target === 'off' ? 'Off' : 'On',
         target !== 'off',
         mode,
         'Can’t reach the lights',
@@ -615,6 +633,34 @@ const press = (element) =>
   });
 const shown = () => $('.light-info').dataset.shown === 'true';
 
+test('an observed stream leaves both modes available and unselected until the user acts', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    const { fixture } = portal;
+    await act(async () =>
+      fixture.publish({
+        target: 'off',
+        control: {
+          remembered: 'effects',
+          external: true,
+          busy: false,
+          power: 'on',
+        },
+        session: { state: 'stopped' },
+      }),
+    );
+    assert.equal($('.lighting-status').textContent, 'Live stream detected.');
+    assert.equal($('[data-power]').getAttribute('aria-pressed'), 'true');
+    for (const tile of document.querySelectorAll('.modes [role="radio"]'))
+      assert.equal(tile.getAttribute('aria-checked'), 'false');
+    await press($('[data-target="screen_sync"]'));
+    assert.equal(fixture.snapshot().target, 'screen_sync');
+    assert.equal(fixture.snapshot().control.remembered, 'screen_sync');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('a refused click is said only until the lights change', async () => {
   // It stayed on screen, above the live state, until the next click.
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
@@ -657,7 +703,6 @@ test('a refused click is said only until the lights change', async () => {
 });
 
 test('an old refused click does not come back when the lights do', async () => {
-  // Hidden only while the lights differed: back as they were, it showed again.
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
@@ -804,26 +849,15 @@ test('with the lights off the path marks a failure only where it is', () => {
       JSON.stringify(input),
     );
   // A refused video is never a problem, however long it lasts.
-  const refused = lightingSituation({
+  const refused = sectionPortal({
+    device: {},
     target: 'screen_sync',
     session: { state: 'screen_sync' },
     input: { fps: 0, picture: 'refused' },
   });
   for (const section of ['capture', 'output'])
     assert.deepEqual(
-      sectionStatus(
-        section,
-        {
-          online: true,
-          target: 'screen_sync',
-          path: pathOf(refused),
-          failure: situationFailure(refused),
-          situation: refused,
-          device: {},
-        },
-        'WLED at 192.0.2.1',
-        true,
-      ),
+      sectionStatus(section, refused, 'WLED at 192.0.2.1', true),
       {
         tone: 'idle',
         title: 'No picture',
@@ -862,18 +896,11 @@ test('with the lights off a section page says the failure it names, else not in 
     [{ kind: 'adapter', message: 'x' }, idle, idle],
     [{ kind: 'invalid', field: 'processing.gamma', message: 'x' }, idle, idle],
   ]) {
-    const situation = lightingSituation({
+    const live = sectionPortal({
       target: 'off',
       session: { state: 'stopped', failure },
-    });
-    const live = {
-      online: true,
-      target: 'off',
-      path: pathOf(situation),
-      failure: situationFailure(situation),
-      situation,
       device: {},
-    };
+    });
     for (const [section, expected] of [
       ['capture', video],
       ['output', lights],
@@ -918,7 +945,6 @@ test('settings Prysm can’t use are said as such, whatever the target', () => {
         'Prysm can’t use these settings.',
         JSON.stringify([failure, target]),
       );
-  // The section it names says so; the other one says screen sync stopped.
   const identity = 'WLED at 192.0.2.1';
   const unusable = 'Can’t use these settings';
   const stopped = [
@@ -941,18 +967,11 @@ test('settings Prysm can’t use are said as such, whatever the target', () => {
       ['problem', unusable, identity, 'x'],
     ],
   ]) {
-    const situation = lightingSituation({
+    const live = sectionPortal({
       target: 'screen_sync',
       session: { state: 'stopped', failure },
-    });
-    const live = {
-      online: true,
-      target: 'screen_sync',
-      path: pathOf(situation),
-      failure: situationFailure(situation),
-      situation,
       device: {},
-    };
+    });
     for (const [section, expected] of [
       ['capture', video],
       ['output', lights],
@@ -1006,17 +1025,8 @@ test('lights that don’t answer Off or their effects are said on the lights pag
     title: 'Can’t reach the lights',
     detail: `${identity}. The lights don’t answer. Check that they are powered and on the network.`,
   };
-  const liveOf = (target, session) => {
-    const situation = lightingSituation({ target, session });
-    return {
-      online: true,
-      target,
-      path: pathOf(situation),
-      failure: situationFailure(situation),
-      situation,
-      device,
-    };
-  };
+  const liveOf = (target, session) =>
+    sectionPortal({ target, session, device });
   const unusable = {
     kind: 'invalid',
     field: 'capture.device',
@@ -1035,7 +1045,6 @@ test('lights that don’t answer Off or their effects are said on the lights pag
       'Not in use',
       target,
     );
-    // Saved settings Prysm can't use, beside the wait, on their own side.
     const beside = liveOf(target, { state: 'unanswered', failure: unusable });
     assert.deepEqual(beside.path, { kind: 'failed', at: 'capture' }, target);
     assert.deepEqual(
@@ -1061,7 +1070,7 @@ test('the light card says lights that don’t answer, and what Prysm does once t
   const { fixture } = portal;
   try {
     for (const [target, text] of [
-      ['off', 'The lights switch off as soon as they answer.'],
+      ['off', 'Power off could not be confirmed.'],
       ['effects', 'WLED effects start as soon as the lights answer.'],
     ]) {
       await act(async () =>
@@ -1085,7 +1094,7 @@ test('the light card says lights that don’t answer, and what Prysm does once t
       );
       assert.equal(
         $('.light-word [data-shown="true"]').textContent,
-        'Off',
+        target === 'off' ? 'Off' : 'On',
         target,
       );
     }

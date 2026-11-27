@@ -11,18 +11,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// encoding it lacks is absent), and its Prysm release, as JSON
 /// `{ "encodings": { "h264_hardware": [Mode, ...], "raw": [...] },
 /// "prysm": "1.0.0" }`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Offer {
     encodings: BTreeMap<StreamEncoding, Vec<Mode>>,
-    prysm: Option<String>,
-}
-
-/// An offer as it is sent.
-#[derive(Serialize)]
-struct OfferMessage<'a> {
-    encodings: &'a BTreeMap<StreamEncoding, Vec<Mode>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    prysm: Option<&'a str>,
+    prysm: Option<String>,
 }
 
 /// An offer as it is read: unknown keys and encodings are skipped, and modes
@@ -117,11 +110,7 @@ impl Offer {
 
     /// As the upgrade request's header value: compact ASCII JSON.
     pub(crate) fn header(&self) -> String {
-        serde_json::to_string(&OfferMessage {
-            encodings: &self.encodings,
-            prysm: self.prysm(),
-        })
-        .expect("offers serialize")
+        serde_json::to_string(self).expect("offers serialize")
     }
 
     /// The offer in an announcement; `None` for anything else. An encoding
@@ -212,7 +201,6 @@ mod tests {
             offer.modes(StreamEncoding::H264Software),
             Modes::Known(Vec::new())
         );
-        // Offered without modes: nothing streams in it.
         let raw = RemoteSettings {
             encoding: StreamEncoding::Raw,
             ..request
@@ -231,7 +219,6 @@ mod tests {
             "encodings": {
                 "h264_hardware": [mode],
                 "av1": [{ "profile": "main" }],
-                // Not modes: only this encoding is skipped.
                 "h264_software": [{ "width": 1 }],
                 "raw": [],
             },

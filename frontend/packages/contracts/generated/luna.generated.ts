@@ -184,10 +184,14 @@ export interface components {
             /** @description Frames should flow to the receiver. */
             enabled: boolean;
         };
+        /**
+         * @description Lighting intent accepted by the full TV service.
+         * @enum {string}
+         */
+        SetTargetChoice: "off" | "screen_sync" | "effects" | "remembered";
         /** @description `setTarget` request (full package). */
         SetTargetRequest: {
-            /** @description What the lights do: off, screen sync, or their own effects. */
-            target: components["schemas"]["LightingTarget"];
+            target: components["schemas"]["SetTargetChoice"];
         };
         /**
          * @description Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
@@ -231,6 +235,10 @@ export interface components {
             message: string;
             /** @enum {string} */
             state: "waiting";
+        } | {
+            message: string;
+            /** @enum {string} */
+            state: "capture_waiting";
         } | {
             message: string;
             /** @enum {string} */
@@ -341,6 +349,7 @@ export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type Problem = components['schemas']['Problem'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
+export type SetTargetChoice = components['schemas']['SetTargetChoice'];
 export type SetTargetRequest = components['schemas']['SetTargetRequest'];
 export type SlimLink = components['schemas']['SlimLink'];
 export type SlimWorker = components['schemas']['SlimWorker'];

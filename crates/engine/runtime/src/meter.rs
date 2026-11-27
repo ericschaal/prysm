@@ -115,16 +115,13 @@ impl Meter {
             .saturating_sub(last.frames_received);
         let sent = counters.frames_sent.saturating_sub(last.frames_sent);
         let flushed = counters.flushed.count.saturating_sub(last.flushed.count);
-        // Received to written, for every flushed frame.
         let output = counters.flushed.total.saturating_sub(last.flushed.total);
-        // No slack, and which step took it.
         let processing = counters
             .processing
             .total
             .saturating_sub(last.processing.total);
         let spent = cycles.total.saturating_sub(self.last.cycles.total);
         let behind = self.pace.window(verdict(output, processing, spent));
-        // Capture to received, only when every flushed frame had a capture time.
         let stamped = captured.count.saturating_sub(self.last.captured.count);
         let capture = (flushed > 0 && stamped == flushed)
             .then(|| captured.total.saturating_sub(self.last.captured.total));
@@ -220,7 +217,6 @@ mod tests {
     /// loop idle between them: never behind, however slow each frame is.
     #[test]
     fn idle_time_between_frames_is_never_behind() {
-        // 24 frames of 20 ms each: busy 480 ms of the second.
         assert_eq!(verdict(ms(480), ms(400), SECOND), Behind::None);
         assert_eq!(
             verdict(Duration::ZERO, Duration::ZERO, SECOND),
@@ -232,17 +228,13 @@ mod tests {
     #[test]
     fn it_takes_several_windows_to_report_and_to_clear() {
         let mut pace = Pace::default();
-        // One slow window is not falling behind.
         assert_eq!(pace.window(Behind::Output), Behind::None);
         assert_eq!(pace.window(Behind::None), Behind::None);
-        // Three in a row are; mixed causes still count, the latest names it.
         assert_eq!(pace.window(Behind::Output), Behind::None);
         assert_eq!(pace.window(Behind::Processing), Behind::None);
         assert_eq!(pace.window(Behind::Output), Behind::Output);
-        // One good window does not clear it.
         assert_eq!(pace.window(Behind::None), Behind::Output);
         assert_eq!(pace.window(Behind::Output), Behind::Output);
-        // Three in a row do.
         for _ in 0..2 {
             assert_eq!(pace.window(Behind::None), Behind::Output);
         }

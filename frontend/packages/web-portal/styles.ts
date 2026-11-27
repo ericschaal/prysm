@@ -1,8 +1,6 @@
-import type {
-  Processing,
-  Style,
-  StyleValues,
-} from '@prysm/contracts/application';
+import type { Style, StyleValues } from '@prysm/contracts/application';
+import type { Processing } from '@prysm/contracts/application-reading';
+import { known } from '@prysm/application-client';
 import { builtInStyles } from '@prysm/contracts/constants';
 
 export type BuiltInStyle = Exclude<Style, 'custom'>;
@@ -29,6 +27,8 @@ export const styles: Readonly<Record<Style, { label: string; about: string }>> =
 
 export const styleOrder = Object.keys(styles) as readonly Style[];
 
+export const styleOf = (name: string) => known(styleOrder, name, null);
+
 /**
  * What choosing `next` saves: the style, and on a first Custom the values
  * of the style that was ticked, so Custom starts from what the lights show.
@@ -37,10 +37,10 @@ export const styleOrder = Object.keys(styles) as readonly Style[];
 export function chooseStyle<
   P extends Pick<Processing, 'style' | 'custom_style'>,
 >(processing: P, next: Style): P {
-  const current = processing.style.kind;
+  const current = styleOf(processing.style.kind);
   const start =
     next === 'custom' && !processing.custom_style && current !== 'custom'
-      ? { custom_style: { ...styleValues[current] } }
+      ? { custom_style: { ...styleValues[current ?? 'natural'] } }
       : {};
   return { ...processing, ...start, style: { kind: next } };
 }

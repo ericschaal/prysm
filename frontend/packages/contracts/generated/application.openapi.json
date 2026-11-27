@@ -75,6 +75,7 @@
             "description": "How many LEDs a found output device says it has, when it says.",
             "example": 120,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -165,7 +166,7 @@
           },
           "midtones": {
             "description": "Positive lightens midtones, negative darkens them.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
@@ -175,14 +176,14 @@
           },
           "tint": {
             "description": "Positive adds magenta, negative adds green.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
           },
           "warmth": {
             "description": "Positive warms, negative cools.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
@@ -217,6 +218,7 @@
             "description": "How many LEDs the lights say they have (WLED: its LED count). Prysm\nsends the configured `settings.output.leds` either way: a different\ncount leaves LEDs dark or colours unshown.",
             "example": 120,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -255,6 +257,7 @@
               "current": {
                 "description": "The revision to retry against.",
                 "format": "int64",
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -668,6 +671,33 @@
         ],
         "type": "object"
       },
+      "LightingControl": {
+        "description": "Intent and observed power have separate lifetimes. An external live stream\nleaves both mode buttons unselected until the user requests a mode.",
+        "properties": {
+          "busy": {
+            "type": "boolean"
+          },
+          "external": {
+            "type": "boolean"
+          },
+          "power": {
+            "$ref": "#/components/schemas/Power"
+          },
+          "remembered": {
+            "$ref": "#/components/schemas/LightingMode"
+          },
+          "waiting": {
+            "$ref": "#/components/schemas/WaitingFor",
+            "description": "A requested mode is waiting for a prerequisite that can recover."
+          }
+        },
+        "required": [
+          "remembered",
+          "external",
+          "busy"
+        ],
+        "type": "object"
+      },
       "LightingFailure": {
         "description": "Why the lighting is as it is: the failure a session state carries. An\nadapter failure carries its cause chain (`context: cause: cause`), since\nthe cause is what names the problem (a device's error, a remote sender's\nreason).",
         "oneOf": [
@@ -737,6 +767,14 @@
             "type": "object"
           }
         ]
+      },
+      "LightingMode": {
+        "description": "The selected mode restored by the Power button.",
+        "enum": [
+          "screen_sync",
+          "effects"
+        ],
+        "type": "string"
       },
       "LightingTarget": {
         "description": "What the user wants the LEDs to do.",
@@ -860,6 +898,14 @@
         ],
         "type": "string"
       },
+      "Power": {
+        "description": "Physical power as reported by an output. An unknown value is represented by\nthe absence of an observation.",
+        "enum": [
+          "off",
+          "on"
+        ],
+        "type": "string"
+      },
       "PreviewEvent": {
         "description": "One server-sent event of the preview stream.",
         "oneOf": [
@@ -927,6 +973,7 @@
         "properties": {
           "height": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -937,17 +984,20 @@
           "sequence": {
             "description": "Increases with every new frame, across sessions; equal means unchanged.",
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
           "source_height": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "source_width": {
             "description": "The captured frame's size in pixels; `viewport` is in these pixels.",
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -958,6 +1008,7 @@
           "width": {
             "description": "The JPEG's size in pixels: the source scaled to at most 480 on its\nlonger side, keeping its aspect ratio.",
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -978,21 +1029,25 @@
         "properties": {
           "height": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "width": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "x": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "y": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -1011,14 +1066,14 @@
         "properties": {
           "hue": {
             "description": "Positive turns toward the next primary in red, green, blue order,\nnegative toward the previous one.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
           },
           "strength": {
             "description": "Negative makes the colour softer, positive stronger.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
@@ -1042,7 +1097,7 @@
             "type": "string"
           },
           "brightness_percent": {
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
@@ -1064,7 +1119,7 @@
           },
           "sample_density": {
             "description": "Samples per 1000 px of edge, measured on the picture scaled down to\n640x360: the same value gives the same samples at any capture size.\nAt most one sample per sampling-grid cell along an edge (128 along the\nlonger side): density 200 reaches it for 16:9 pictures of 640x360 or\nmore, a higher one for squarer or smaller pictures.",
-            "format": "int32",
+            "format": "uint16",
             "maximum": 512,
             "minimum": 1,
             "type": "integer"
@@ -1202,6 +1257,7 @@
         "properties": {
           "revision": {
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           }
@@ -1217,6 +1273,7 @@
         "properties": {
           "expected": {
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
@@ -1237,18 +1294,21 @@
           "max": {
             "example": 1920,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "min": {
             "example": 2,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "step": {
             "example": 2,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 1,
             "type": "integer"
           }
@@ -1267,9 +1327,12 @@
             "$ref": "#/components/schemas/CalibrationPattern",
             "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
           },
+          "control": {
+            "$ref": "#/components/schemas/LightingControl"
+          },
           "device": {
             "$ref": "#/components/schemas/DeviceReport",
-            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.picture` say which. While\nthe lights are waited for, `issue` is `unreachable` alone: a session\nwaits for lights that did not answer its open, or the session is\n`unanswered`."
+            "description": "The output's latest report. While the requested mode waits for the\noutput, `issue` is `unreachable`. Read `control.waiting` for the\ncurrent prerequisite and `input` for frame delivery."
           },
           "input": {
             "$ref": "#/components/schemas/Input",
@@ -1278,6 +1341,7 @@
           "revision": {
             "description": "Pass back as `expected` when replacing settings.",
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
@@ -1306,6 +1370,7 @@
         "required": [
           "version",
           "target",
+          "control",
           "session",
           "device",
           "settings",
@@ -1338,28 +1403,28 @@
           },
           "color_focus_percent": {
             "description": "How much each light keeps the colour next to it, taking less from the\nrest of the picture; 0 is the plain average.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
           },
           "cut_response_percent": {
             "description": "How much of a scene cut the lights take at once; 0 eases a cut in\nlike any other change.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
           },
           "dark_floor_percent": {
             "description": "The least luminance the lights keep, as a neutral white glow, in\npercent of full light; 0 lets them go fully dark.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 20,
             "minimum": 0,
             "type": "integer"
           },
           "saturation_boost_percent": {
             "description": "Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
@@ -1373,7 +1438,7 @@
           },
           "spatial_reach_percent": {
             "description": "Edge depth: how far into the picture each light looks, in percent of\nthe picture's height.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -1402,6 +1467,14 @@
           "target"
         ],
         "type": "object"
+      },
+      "WaitingFor": {
+        "description": "The required adapter holding up the current request.",
+        "enum": [
+          "capture",
+          "output"
+        ],
+        "type": "string"
       }
     }
   },

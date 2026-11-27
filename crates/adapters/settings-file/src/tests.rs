@@ -17,7 +17,6 @@ fn sample() -> Settings {
         )),
         processing: Processing {
             brightness_percent: 80,
-            // A built-in style is chosen; the custom values are kept.
             style: Style::Calm,
             custom_style: Some(StyleValues {
                 smoothing_seconds: 0.3,
@@ -51,6 +50,24 @@ fn missing_file_loads_as_none_without_creating_it() {
 }
 
 #[test]
+fn remembered_mode_survives_restart_independently_of_settings() {
+    use prysm_ports::LightingMode::{Effects, ScreenSync};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = SettingsFile::new(&path);
+    assert_eq!(store.load_mode().unwrap(), None);
+    store.save(&sample()).unwrap();
+    for mode in [Effects, ScreenSync] {
+        store.save_mode(mode).unwrap();
+        assert_eq!(SettingsFile::new(&path).load_mode().unwrap(), Some(mode));
+    }
+    fs::write(path.with_added_extension("mode"), b"invalid").unwrap();
+    assert!(store.load_mode().is_err());
+    assert_eq!(store.load().unwrap(), Some(sample()));
+}
+
+#[test]
 fn save_then_load_round_trips_as_pretty_json() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
@@ -71,7 +88,6 @@ fn save_then_load_round_trips_as_pretty_json() {
     assert!(text.contains("\"brightness_ramp_seconds\": 0.5,"), "{text}");
     assert!(text.contains("\"color_focus_percent\": 60,"), "{text}");
     assert!(text.contains("\"dark_floor_percent\": 10\n"), "{text}");
-    // Saving the loaded value again is byte-for-byte stable.
     let loaded = store.load().unwrap().unwrap();
     store.save(&loaded).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
@@ -103,7 +119,6 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
             "brightnes_percent",
             "line 1",
         ),
-        // Beside the format, at the top: the format is not a gap for other fields.
         (
             "{ \"format\": 1,\n  \"outptu\": { \"kind\": \"null\" } }",
             "outptu",
@@ -162,7 +177,6 @@ fn format_error(text: &str) -> (FormatError, String) {
 
 #[test]
 fn a_newer_format_is_refused_for_its_number_before_its_fields() {
-    // A newer Prysm's file may well have fields this one does not know.
     let (error, message) = format_error(r#"{ "added": true, "format": 2 }"#);
     assert_eq!(error, FormatError::Newer { found: 2.into() });
     assert!(
@@ -263,7 +277,6 @@ fn corrupt_json_error_names_the_path_and_keeps_the_serde_source() {
 #[test]
 fn unreadable_path_reports_io_source() {
     let directory = tempfile::tempdir().unwrap();
-    // A directory exists at the path, so reading it fails with something other than NotFound.
     let error = SettingsFile::new(directory.path()).load().unwrap_err();
     assert!(
         error.to_string().starts_with("cannot read settings file"),
@@ -293,8 +306,6 @@ fn save_into_missing_directory_errors_clearly() {
 #[test]
 fn failed_replace_leaves_target_and_directory_untouched() {
     let directory = tempfile::tempdir().unwrap();
-    // A non-empty directory at the target path: the temporary file is fully
-    // written but the rename fails.
     let path = directory.path().join("settings.json");
     fs::create_dir(&path).unwrap();
     fs::write(path.join("keep"), "x").unwrap();
@@ -320,7 +331,6 @@ fn failed_save_never_truncates_the_existing_file() {
     store.save(&sample()).unwrap();
     let before = fs::read(&path).unwrap();
 
-    // A read-only directory refuses the temporary file.
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500)).unwrap();
     if tempfile::tempfile_in(directory.path()).is_ok() {
         // Running as root: permissions do not apply, nothing to test. CI's
@@ -448,7 +458,6 @@ fn a_save_after_a_failed_load_keeps_the_unreadable_file_beside_it() {
         assert!(name.starts_with("settings.json.unreadable-"), "{name}");
         assert_eq!(bytes, text);
 
-        // Once replaced, saves replace as usual.
         store.save(&Settings::default()).unwrap();
         assert_eq!(set_aside(directory.path()).len(), 1);
     }
@@ -611,7 +620,6 @@ fn without_a_hard_link_or_a_copy_the_unreadable_file_is_moved_aside() {
     }
     let size = |path: &Path| fs::symlink_metadata(path).unwrap().len();
 
-    // The save's rename fails: the file is back at its path.
     let mut failing = SettingsFile::new(&path)
         .with_link(no_link)
         .with_replace(|_, _| Err(std::io::Error::other("disk full")));

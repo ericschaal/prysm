@@ -9,7 +9,6 @@ test.use({
 });
 
 test.beforeEach(async ({ page }) => {
-  // “No lights” is a developer option: on in this browser.
   await page.addInitScript(() =>
     window.localStorage.setItem('prysm.developer', 'on'),
   );
@@ -39,8 +38,13 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
   await expect(
     page.getByRole('status').filter({ hasText: 'Setup saved.' }),
   ).toBeVisible();
+  const lights = page.getByRole('region', { name: 'Your lights' });
+  await expect(lights.locator('[data-power]')).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+  await expect(lights.getByRole('radiogroup', { name: 'Mode' })).toHaveCount(0);
   const saved = await prysm.savedSettings();
-  // Written in full: a later default changes only new setups.
   expect(saved.capture).toEqual({
     kind: 'remote',
     width: 320,

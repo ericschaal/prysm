@@ -232,6 +232,21 @@ fn get_state_is_open_and_subscribable() {
 }
 
 #[test]
+fn subscriptions_publish_only_changes_in_order() {
+    let mut h = Harness::new(config(), None);
+    for enabled in [true, true, false, false, true] {
+        h.app("setPreferences", &format!(r#"{{"autostart":{enabled}}}"#));
+    }
+    let changes: Vec<_> = h
+        .bus
+        .published
+        .iter()
+        .map(|state| state["preferences"]["autostart"].as_bool().unwrap())
+        .collect();
+    assert_eq!(changes, [true, false, true]);
+}
+
+#[test]
 fn only_the_app_may_change_anything() {
     let mut h = Harness::new(config(), None);
     for (method, payload) in [
@@ -273,7 +288,6 @@ fn preferences_are_validated_persisted_and_applied() {
         bad["errorText"],
         "invalid setPreferences request: Prysm address `http://0.0.0.0:8787`: needs Prysm's address, not 0.0.0.0"
     );
-    // A host name is saved as typed; the TV resolves it when it connects.
     let named = h.app(
         "setPreferences",
         r#"{"prysm_address":"https://prysm.example.com"}"#,
@@ -299,7 +313,6 @@ fn preferences_are_validated_persisted_and_applied() {
         reply["preferences"]["prysm_address"],
         "http://192.168.1.20:8787"
     );
-    // Full rejects slim-only fields.
     let mut full = Harness::new(config(), None);
     let refused = full.app(
         "setPreferences",
@@ -341,7 +354,6 @@ fn full_keeps_the_fields_it_does_not_own() {
             "newer": [1, 2],
         })
     );
-    // Back on slim, the address is there.
     let mut slim = Harness::new(slim_config(), Some(h.saved()));
     assert_eq!(
         slim.call("getState", "x", "{}")["preferences"],
@@ -462,7 +474,6 @@ fn unreadable_preferences_are_reported_and_kept_until_saved() {
             state["preferences"],
             serde_json::json!({ "autostart": false })
         );
-        // Starting and stopping changes nothing on disk.
         call("getState", "{}");
         service.power(
             &mut bus,
@@ -492,13 +503,19 @@ fn power_and_video_drive_the_worker_and_its_commands() {
     assert_eq!(
         h.log(),
         [
-            "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --target off",
+            "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787",
             r#"send {"type":"video","video":"unknown"}"#,
         ]
     );
     let now = h.at(1);
     h.service.video(&mut h.bus, ACTIVE_VIDEO, now);
-    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
+    assert_eq!(
+        h.log(),
+        [
+            r#"send {"type":"video","video":"available"}"#,
+            r#"send {"type":"observe_video","available":true}"#,
+        ]
+    );
     let changed = ACTIVE_VIDEO.replace(r#""connectedSourcePort":1"#, r#""connectedSourcePort":2"#);
     let now = h.at(2);
     h.service.video(&mut h.bus, &changed, now);
@@ -569,10 +586,14 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
 /// A worker that dies without a word (its event stream ends cleanly) is
 /// restarted at once, with nothing shown; dying again before a frame asks.
 #[test]
-fn a_worker_that_dies_is_restarted_once() {
+fn a_stable_worker_is_restarted_and_an_initializing_replacement_is_not() {
     let mut h = Harness::new(config(), None);
     h.power("Active", 0);
     h.log();
+    h.world
+        .borrow_mut()
+        .outputs
+        .push_back(Output::Event(Event::Initialized {}));
     h.world.borrow_mut().exit = Some(Exit::Signal(9));
     assert!(h.tick(100));
     let log = h.log();
@@ -589,7 +610,7 @@ fn a_worker_that_dies_is_restarted_once() {
         published["worker"]["problem"]["message"]
             .as_str()
             .unwrap()
-            .starts_with("again after a restart: worker killed by signal 9")
+            .starts_with("worker killed by signal 9")
     );
 }
 
@@ -761,9 +782,13 @@ fn a_worker_let_go_is_asked_about_until_its_late_reap() {
     h.world.borrow_mut().wait_fails = false;
     h.world.borrow_mut().let_go_reaped = true;
     assert!(h.tick(16_002));
-    assert!(h.log()[0].starts_with("spawn "));
+    assert!(h.log().is_empty());
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"]["phase"], "running", "{published}");
+    assert_eq!(published["worker"]["phase"], "asking", "{published}");
+    assert_eq!(
+        published["worker"]["problem"]["message"],
+        "worker link broke: malformed"
+    );
 }
 
 /// A worker reaped just before it would be let go, its last lines still
@@ -793,7 +818,6 @@ fn a_reaped_worker_is_not_let_go_while_its_last_lines_are_read() {
 
 #[test]
 fn a_restart_within_one_boot_resumes_the_last_intent() {
-    // Lighting was turned on (autostart off), then the service restarted.
     let mut h = Harness::new(config(), None);
     h.power("Active", 0);
     h.log();
@@ -809,11 +833,10 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
     service.power(&mut bus, r#"{"returnValue":true,"state":"Active"}"#, t0);
     assert_eq!(
         world.borrow().log[0],
-        "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --target screen_sync"
+        "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787"
     );
     assert_eq!(service.machine().intent(), LightingTarget::ScreenSync);
 
-    // Turning it off is remembered too.
     service.request(&mut bus, "setTarget", APP_ID, r#"{"target":"off"}"#, t0);
     assert_eq!(service.store.1, Some(LightingTarget::Off));
 }
@@ -854,8 +877,9 @@ fn packaged_api_permissions_list_every_method() {
         .map(|method| format!("{service}/{}", method.name()))
         .collect();
     assert_eq!(api, serde_json::json!({ "public": expected }));
-    for method in Method::ALL {
-        assert_eq!(Method::parse(method.name()), Some(method));
+    for (method, name) in Method::ALL.into_iter().zip(METHODS) {
+        assert_eq!(method.name(), name);
+        assert_eq!(Method::parse(name), Some(method));
     }
     assert_eq!(Method::parse("GetState"), None);
 }
@@ -940,4 +964,25 @@ fn replies_keep_their_bytes() {
     ] {
         assert_eq!(reply, expected);
     }
+}
+
+#[test]
+fn power_from_asking_dispatches_remembered_after_spawn_without_guessing_a_mode() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.world.borrow_mut().exit = Some(Exit::Code(1));
+    assert!(h.tick(1));
+    assert!(h.log().is_empty());
+    assert_eq!(h.bus.published.last().unwrap()["worker"]["phase"], "asking");
+    let reply = h.app("setTarget", r#"{"target":"remembered"}"#);
+    assert_eq!(reply["returnValue"], true);
+    assert_eq!(
+        h.log(),
+        [
+            "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787",
+            r#"send {"type":"resume","sequence":1}"#,
+            r#"send {"type":"video","video":"unknown"}"#,
+        ]
+    );
 }

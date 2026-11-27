@@ -402,11 +402,9 @@ mod tests {
         let (second, _) = connection(2);
         handoff.offer(first).unwrap();
         handoff.offer(second).unwrap();
-        // The replaced connection was closed: its peer reads end of stream.
         assert_eq!(first_peer.read(&mut [0; 1]).unwrap(), 0);
         assert_eq!(receiving.take().unwrap().buffered, [2]);
 
-        // One not taken when the source stops is closed too.
         let (third, mut third_peer) = connection(3);
         handoff.offer(third).unwrap();
         drop(receiving);

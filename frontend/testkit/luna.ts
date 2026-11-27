@@ -1,3 +1,4 @@
+import type { SlimLink } from '@prysm/contracts/luna';
 /**
  * An in-memory TV supervisor behind a fake service bridge, so tests and the
  * demo pages run the real Luna client. It follows the supervisor's rules
@@ -23,7 +24,6 @@ import {
   type Problem,
   type ServiceBridge,
   type StreamEncoding,
-  type SlimLink,
   type SlimWorker,
   type State,
   type Video,
@@ -389,7 +389,9 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           );
           return;
         }
-        facts.target = payload.target as LightingTarget;
+        if (payload.target === 'remembered') {
+          if (facts.target === 'off') facts.target = 'effects';
+        } else facts.target = payload.target as LightingTarget;
         reconcile(true);
         respond(reply(state()));
         later(() => publish());

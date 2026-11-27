@@ -1,11 +1,10 @@
 //! The saved settings and what the processor is given: saves, the
 //! calibration pattern, tried processing, and the config they make.
-use super::Core;
-use super::lighting::Lighting;
+use super::{Core, control::Ports};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, CalibrationPattern, Error, LightingTarget, Processing, Result, Revision,
-    Section, Settings, SettingsStore, ValidationError,
+    CalibrationPattern, Error, LightingTarget, Processing, Result, Revision, Settings,
+    SettingsStore,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -44,7 +43,10 @@ impl Core {
         if expected != current {
             return Err(Error::StaleRevision { expected, current });
         }
-        self.registry.validate(&settings)?;
+        let ports = Ports::new(&self.registry, &settings, None);
+        if let Some(error) = ports.failure {
+            return Err(error);
+        }
         let store = self.store.clone();
         let saved = settings.clone();
         self.run_blocking(move || lock(&store).save(&saved))
@@ -60,7 +62,6 @@ impl Core {
         };
         let adapters_changed = output_changed || capture_changed;
         let revision = current.next();
-        // Saved settings end a trial.
         let install = |core: &mut Self| {
             core.trial = None;
             core.state.send_modify(|s| {
@@ -68,14 +69,12 @@ impl Core {
                 s.revision = revision;
             });
         };
-        if matches!(self.lighting, Lighting::ScreenSync(_)) && !adapters_changed {
-            // Same adapters: the running session takes the new processing.
+        if self.lighting.session().is_some() && !adapters_changed {
             self.reconfigure(install);
         } else {
             install(self);
         }
-        let applied = self.reconcile(adapters_changed, output_changed).await;
-        self.record(&applied);
+        self.lighting_settings_changed(ports, capture_changed, output_changed);
         Ok(revision)
     }
 
@@ -112,17 +111,17 @@ impl Core {
     /// Apply `change`, then give a running session the config that follows
     /// if it differs. Without a session there is nothing to compare.
     pub(super) fn reconfigure(&mut self, change: impl FnOnce(&mut Self)) {
-        if !matches!(self.lighting, Lighting::ScreenSync(_)) {
+        if self.lighting.session().is_none() {
             change(self);
             return;
         }
         let before = self.config();
         change(self);
         let after = self.config();
-        if let Lighting::ScreenSync(running) = &self.lighting
+        if let Some(session) = self.lighting.session()
             && after != before
         {
-            running.session.configure(after);
+            session.configure(after);
         }
     }
 
@@ -137,20 +136,6 @@ impl Core {
         match snapshot.calibration {
             Some(calibration) => calibration.adjust(processing.config()),
             None => processing.config(),
-        }
-    }
-
-    /// `section`'s adapter settings. Missing, they are not configured; while
-    /// the store could not be read, its failure says why.
-    pub(super) fn configured(
-        &self,
-        settings: Option<&AdapterSettings>,
-        section: Section,
-    ) -> Result<AdapterSettings> {
-        match (settings, &self.unreadable) {
-            (Some(settings), _) => Ok(settings.clone()),
-            (None, Some(unreadable)) => Err(unreadable.clone()),
-            (None, None) => Err(ValidationError::new(section.as_str(), "not configured").into()),
         }
     }
 }

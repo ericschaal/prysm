@@ -7,14 +7,13 @@ use crate::metrics;
 use crate::page;
 use crate::preview::Previews;
 use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
+use crate::sampled::Sampled;
 use bytes::Bytes;
 use futures::stream;
 use http_body_util::{BodyExt, Limited};
 use hyper::header::HeaderValue;
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
-use prysm_ports::{
-    AdapterSettings, CAPTURE_STREAM_PATH, CalibrationPattern, Handoff, Processing, Result, Section,
-};
+use prysm_ports::{AdapterSettings, CAPTURE_STREAM_PATH, Handoff, Processing, Section};
 use prysm_protocol::{Failure, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
@@ -46,8 +45,8 @@ pub(crate) struct Context {
     /// connection; joined by the server after the connections.
     upgrades: Mutex<JoinSet<()>>,
     streams: Arc<Semaphore>,
-    previews: Previews,
-    colors: Colors,
+    previews: Sampled<Previews>,
+    colors: Sampled<Colors>,
 }
 
 impl Context {
@@ -68,8 +67,18 @@ impl Context {
             shutdown,
             upgrades: Mutex::default(),
             streams: Arc::new(Semaphore::new(STREAMS)),
-            previews: Previews::new(),
-            colors: Colors::new(),
+            previews: Sampled::new(
+                4,
+                "too many preview viewers",
+                Duration::from_millis(125),
+                Previews::default(),
+            ),
+            colors: Sampled::new(
+                8,
+                "too many colors streams",
+                Duration::from_millis(100),
+                Colors,
+            ),
         }
     }
 }
@@ -96,18 +105,18 @@ pub(crate) async fn handle(context: Arc<Context>, request: Request<Incoming>) ->
 }
 
 async fn route(context: &Context, request: Request<Incoming>) -> Response {
-    let path = request.uri().path().to_owned();
+    let path = request.uri().path();
     // An enabled `/metrics` follows the API's origin policy.
     if !path.starts_with("/api/") && !(context.metrics && path == METRICS) {
-        return asset(context, &path, &request);
+        return asset(context, path, &request);
     }
     let mut response = match access::check(&context.access, request.headers()) {
-        Err(denied) => *denied,
+        Err(denied) => failure(denied),
         Ok(Some(origin)) if request.method() == Method::OPTIONS => {
             access::preflight(origin, request.headers())
         }
         Ok(cors) => {
-            let mut response = api(context, &path, request).await;
+            let mut response = api(context, request).await.unwrap_or_else(failure);
             if let Some(origin) = cors {
                 access::allow(&mut response, origin);
             }
@@ -125,11 +134,11 @@ async fn route(context: &Context, request: Request<Incoming>) -> Response {
 /// is never stored.
 fn asset(context: &Context, path: &str, request: &Request<Incoming>) -> Response {
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
-        return not_found();
+        return failure(not_found());
     }
     let path = if path == "/" { page::PAGE } else { path };
     let Some(asset) = context.assets.iter().find(|asset| asset.path == path) else {
-        return not_found();
+        return failure(not_found());
     };
     if asset.path == page::PAGE {
         let state = State::from(&*context.engine.snapshot().borrow());
@@ -185,180 +194,118 @@ fn accepts_gzip(headers: &header::HeaderMap) -> bool {
     gzip.or(any).unwrap_or(false)
 }
 
-/// An API path, each written once; a path that is none of these is `404`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Route<'a> {
-    State,
-    StateStream,
-    Metrics,
-    PreviewStream,
-    ColorsStream,
-    CaptureStream,
-    Target,
-    Calibration,
-    ProcessingTrial,
-    Settings,
-    CaptureModes,
-    /// What follows [`CANDIDATES`]: `{section}/{kind}`.
-    Candidates(&'a str),
-}
-
-impl<'a> Route<'a> {
-    fn of(path: &'a str) -> Option<Self> {
-        Some(match path {
-            "/api/v1/state" => Self::State,
-            "/api/v1/state/stream" => Self::StateStream,
-            METRICS => Self::Metrics,
-            "/api/v1/preview/stream" => Self::PreviewStream,
-            "/api/v1/colors/stream" => Self::ColorsStream,
-            CAPTURE_STREAM_PATH => Self::CaptureStream,
-            "/api/v1/target" => Self::Target,
-            "/api/v1/calibration" => Self::Calibration,
-            "/api/v1/processing/trial" => Self::ProcessingTrial,
-            "/api/v1/settings" => Self::Settings,
-            "/api/v1/capture/modes" => Self::CaptureModes,
-            _ => return path.strip_prefix(CANDIDATES).map(Self::Candidates),
-        })
-    }
-}
-
-/// One API path's methods. A known path with another method is `405`, an
-/// unknown path `404`.
-async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Response {
-    let Some(route) = Route::of(path) else {
-        return not_found();
+/// Match each known path and method together. Unknown paths return 404 and
+/// unsupported methods on a known path return 405 before the body is read.
+/// The engine bounds its commands. Disconnecting after dispatch leaves the
+/// command running, and its outcome is visible on the state stream.
+async fn api(context: &Context, request: Request<Incoming>) -> Result<Response, Failure> {
+    let path = request.uri().path();
+    let require_method = |expected: Method| {
+        if request.method() == expected {
+            Ok(())
+        } else {
+            Err(method_not_allowed())
+        }
     };
-    let method = request.method().clone();
-    match (route, method) {
-        (Route::State, Method::GET) => response::json(
-            StatusCode::OK,
-            &State::from(&*context.engine.snapshot().borrow()),
-        ),
-        (Route::StateStream, Method::GET) => stream_state(context),
-        (Route::Metrics, Method::GET) => {
+    Ok(match path {
+        "/api/v1/state" => {
+            require_method(Method::GET)?;
+            response::json(
+                StatusCode::OK,
+                &State::from(&*context.engine.snapshot().borrow()),
+            )
+        }
+        "/api/v1/state/stream" => {
+            require_method(Method::GET)?;
+            stream_state(context)
+        }
+        METRICS => {
+            require_method(Method::GET)?;
             let text =
                 metrics::render(&context.engine.stats(), &context.engine.snapshot().borrow());
             response::bytes(StatusCode::OK, metrics::CONTENT_TYPE, text)
         }
-        (Route::PreviewStream, Method::GET) => {
-            context.previews.stream(&context.engine, &context.shutdown)
+        "/api/v1/preview/stream" => {
+            require_method(Method::GET)?;
+            context
+                .previews
+                .stream(|| context.engine.preview(), &context.shutdown)
         }
-        (Route::ColorsStream, Method::GET) => {
-            context.colors.stream(&context.engine, &context.shutdown)
+        "/api/v1/colors/stream" => {
+            require_method(Method::GET)?;
+            context
+                .colors
+                .stream(|| context.engine.colors(), &context.shutdown)
         }
-        (Route::CaptureStream, method) => match &context.capture {
-            Some(handoff) if method == Method::GET => capture::upgrade(context, handoff, request),
-            Some(_) => method_not_allowed(),
-            None => not_found(),
-        },
-        (Route::Target, Method::PUT) => {
-            match decode::<TargetRequest>(request, Body::Request).await {
-                Ok(body) => applied(command(context.engine.set_target(body.target)).await),
-                Err(response) => *response,
+        CAPTURE_STREAM_PATH => {
+            let handoff = context.capture.as_ref().ok_or_else(not_found)?;
+            require_method(Method::GET)?;
+            capture::upgrade(context, handoff, request)
+        }
+        "/api/v1/target" => {
+            require_method(Method::PUT)?;
+            let body: TargetRequest = decode(request, Body::Request).await?;
+            context.engine.set_target(body.target).await?;
+            response::empty(StatusCode::NO_CONTENT)
+        }
+        "/api/v1/calibration" => {
+            let pattern = match *request.method() {
+                Method::PUT => Some(decode(request, Body::Request).await?),
+                Method::DELETE => None,
+                _ => return Err(method_not_allowed()),
+            };
+            context.engine.set_calibration(pattern).await?;
+            response::empty(StatusCode::NO_CONTENT)
+        }
+        "/api/v1/processing/trial" => {
+            require_method(Method::PUT)?;
+            let body: Processing = decode(request, Body::Section(Section::Processing)).await?;
+            context.engine.try_processing(body).await?;
+            response::empty(StatusCode::NO_CONTENT)
+        }
+        "/api/v1/settings" => {
+            require_method(Method::PUT)?;
+            let body: SettingsRequest = decode(request, Body::Settings).await?;
+            let revision = context
+                .engine
+                .replace_settings(body.expected, body.settings)
+                .await?;
+            response::json(StatusCode::OK, &SettingsReplaced { revision })
+        }
+        "/api/v1/capture/modes" => {
+            require_method(Method::POST)?;
+            let capture: AdapterSettings = decode(request, Body::Section(Section::Capture)).await?;
+            let modes = context.engine.capture_modes(capture).await?;
+            response::json(StatusCode::OK, &modes)
+        }
+        _ => {
+            let rest = path.strip_prefix(CANDIDATES).ok_or_else(not_found)?;
+            let (section, kind) = rest.split_once('/').ok_or_else(not_found)?;
+            let section = match section {
+                "capture" => Section::Capture,
+                "output" => Section::Output,
+                _ => return Err(not_found()),
+            };
+            if kind.is_empty() || kind.contains('/') {
+                return Err(not_found());
             }
+            require_method(Method::GET)?;
+            let found = context.engine.candidates(section, kind).await?;
+            response::json(StatusCode::OK, &found)
         }
-        (Route::Calibration, Method::PUT) => {
-            match decode::<CalibrationPattern>(request, Body::Request).await {
-                Ok(body) => applied(command(context.engine.set_calibration(Some(body))).await),
-                Err(response) => *response,
-            }
-        }
-        (Route::Calibration, Method::DELETE) => {
-            applied(command(context.engine.set_calibration(None)).await)
-        }
-        (Route::ProcessingTrial, Method::PUT) => {
-            match decode::<Processing>(request, Body::Section(Section::Processing)).await {
-                Ok(body) => applied(command(context.engine.try_processing(body)).await),
-                Err(response) => *response,
-            }
-        }
-        (Route::Settings, Method::PUT) => replace_settings(context, request).await,
-        (Route::CaptureModes, Method::POST) => {
-            match decode::<AdapterSettings>(request, Body::Section(Section::Capture)).await {
-                Ok(body) => match command(context.engine.capture_modes(body)).await {
-                    Ok(modes) => response::json(StatusCode::OK, &modes),
-                    Err(response) => *response,
-                },
-                Err(response) => *response,
-            }
-        }
-        (Route::Candidates(rest), method) => candidates(context, rest, &method).await,
-        _ => method_not_allowed(),
+    })
+}
+
+fn not_found() -> Failure {
+    Failure::NotFound {
+        message: "not found".into(),
     }
 }
 
-/// `PUT /api/v1/settings`: the new revision once saved.
-async fn replace_settings(context: &Context, request: Request<Incoming>) -> Response {
-    let body = match decode::<SettingsRequest>(request, Body::Settings).await {
-        Ok(body) => body,
-        Err(response) => return *response,
-    };
-    match command(
-        context
-            .engine
-            .replace_settings(body.expected, body.settings),
-    )
-    .await
-    {
-        Ok(revision) => response::json(StatusCode::OK, &SettingsReplaced { revision }),
-        Err(response) => *response,
+fn method_not_allowed() -> Failure {
+    Failure::MethodNotAllowed {
+        message: "method not allowed".into(),
     }
-}
-
-fn not_found() -> Response {
-    failure(
-        StatusCode::NOT_FOUND,
-        Failure::NotFound {
-            message: "not found".into(),
-        },
-    )
-}
-
-fn method_not_allowed() -> Response {
-    failure(
-        StatusCode::METHOD_NOT_ALLOWED,
-        Failure::MethodNotAllowed {
-            message: "method not allowed".into(),
-        },
-    )
-}
-
-/// What the adapter for `capture/<kind>` or `output/<kind>` finds to choose
-/// from. The adapter bounds the lookup; the engine runs it once at a time.
-async fn candidates(context: &Context, rest: &str, method: &Method) -> Response {
-    let section = match rest.split_once('/') {
-        Some(("capture", kind)) => Some((Section::Capture, kind)),
-        Some(("output", kind)) => Some((Section::Output, kind)),
-        _ => None,
-    };
-    let Some((section, kind)) = section.filter(|(_, kind)| !kind.is_empty() && !kind.contains('/'))
-    else {
-        return not_found();
-    };
-    if method != Method::GET {
-        return method_not_allowed();
-    }
-    match command(context.engine.candidates(section, kind)).await {
-        Ok(found) => response::json(StatusCode::OK, &found),
-        Err(response) => *response,
-    }
-}
-
-/// `204` once a command without a reply value has been applied.
-fn applied(result: Result<(), Box<Response>>) -> Response {
-    match result {
-        Ok(()) => response::empty(StatusCode::NO_CONTENT),
-        Err(response) => *response,
-    }
-}
-
-/// Await an engine command: every one ends, since the engine bounds a
-/// session's stop and each adapter its own calls, so the portal sets no
-/// deadline of its own. A dropped request does not cancel a command the
-/// engine already received; the state stream shows its outcome.
-async fn command<T>(call: impl Future<Output = Result<T>>) -> Result<T, Box<Response>> {
-    call.await
-        .map_err(|error| Box::new(response::error(&error)))
 }
 
 /// Where a request body holds settings. A value there that does not decode
@@ -394,8 +341,7 @@ impl Body {
 async fn decode<T: DeserializeOwned>(
     request: Request<Incoming>,
     settings: Body,
-) -> Result<T, Box<Response>> {
-    let reject = |status, body| Box::new(failure(status, body));
+) -> Result<T, Failure> {
     let json = request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -403,48 +349,31 @@ async fn decode<T: DeserializeOwned>(
         .and_then(|value| value.split(';').next())
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
     if !json {
-        return Err(reject(
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            Failure::UnsupportedMediaType {
-                message: "application/json required".into(),
-            },
-        ));
+        return Err(Failure::UnsupportedMediaType {
+            message: "application/json required".into(),
+        });
     }
     let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
     let body = match timeout(BODY_DEADLINE, body).await {
         Err(_) => {
-            return Err(reject(
-                StatusCode::REQUEST_TIMEOUT,
-                Failure::RequestTimeout {
-                    message: "request body timed out".into(),
-                },
-            ));
+            return Err(Failure::RequestTimeout {
+                message: "request body timed out".into(),
+            });
         }
         Ok(Err(error)) if error.is::<http_body_util::LengthLimitError>() => {
-            return Err(reject(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                Failure::PayloadTooLarge {
-                    message: "request body exceeds 1 MiB".into(),
-                },
-            ));
+            return Err(Failure::PayloadTooLarge {
+                message: "request body exceeds 1 MiB".into(),
+            });
         }
         Ok(Err(_)) => {
-            return Err(reject(
-                StatusCode::BAD_REQUEST,
-                Failure::BadRequest {
-                    message: "request body unreadable".into(),
-                },
-            ));
+            return Err(Failure::BadRequest {
+                message: "request body unreadable".into(),
+            });
         }
         Ok(Ok(body)) => body.to_bytes(),
     };
-    let malformed = |error: &serde_json::Error| {
-        reject(
-            StatusCode::BAD_REQUEST,
-            Failure::BadRequest {
-                message: format!("invalid request: {error}"),
-            },
-        )
+    let malformed = |error: &serde_json::Error| Failure::BadRequest {
+        message: format!("invalid request: {error}"),
     };
     let mut json = serde_json::Deserializer::from_slice(&body);
     let value = serde_path_to_error::deserialize(&mut json).map_err(|error| {
@@ -452,13 +381,10 @@ async fn decode<T: DeserializeOwned>(
             .then(|| settings.field(error.path()))
             .flatten();
         match field {
-            Some(field) => reject(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Failure::Invalid {
-                    message: error.inner().to_string(),
-                    field: Some(field),
-                },
-            ),
+            Some(field) => Failure::Invalid {
+                message: error.inner().to_string(),
+                field: Some(field),
+            },
             None => malformed(error.inner()),
         }
     })?;
@@ -471,12 +397,9 @@ async fn decode<T: DeserializeOwned>(
 /// stops, the portal shuts down or the client goes away.
 fn stream_state(context: &Context) -> Response {
     let Ok(permit) = context.streams.clone().try_acquire_owned() else {
-        return failure(
-            StatusCode::TOO_MANY_REQUESTS,
-            Failure::Busy {
-                message: "too many state streams".into(),
-            },
-        );
+        return failure(Failure::Busy {
+            message: "too many state streams".into(),
+        });
     };
     let mut snapshot = context.engine.snapshot();
     snapshot.mark_changed();
@@ -547,7 +470,6 @@ mod tests {
             &["gzip;q=0"],
             &["gzip; q=0.000"],
             &["*;q=0"],
-            // Named gzip outranks `*` either way.
             &["gzip;q=0, *"],
             &["*", "gzip;q=0"],
         ] {

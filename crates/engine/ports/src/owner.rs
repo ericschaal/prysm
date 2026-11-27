@@ -1,4 +1,4 @@
-use crate::{Error, Pull, Result};
+use crate::{Error, Hangup, Pull, Result, Stopping};
 use prysm_core::Frame;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
@@ -134,8 +134,11 @@ impl OwnerThread {
     /// The thread failed or ended before it was ready.
     pub fn wait_ready(&self, timeout: Duration) -> Result<bool> {
         let state = self.shared.wait(timeout, |state| {
-            state.ready || state.failure.is_some() || state.released.is_some()
+            state.stop || state.ready || state.failure.is_some() || state.released.is_some()
         });
+        if state.stop {
+            return Err(Error::adapter("capture open cancelled", Stopping));
+        }
         if state.ready {
             return Ok(true);
         }
@@ -144,6 +147,15 @@ impl OwnerThread {
             (None, Some(_)) => Err(self.ended()),
             (None, None) => Ok(false),
         }
+    }
+
+    /// Wait for native readiness, or tell the owner to stop upon cancellation.
+    pub fn wait_ready_with_stop(&self, timeout: Duration, stop: &Hangup) -> Result<bool> {
+        let shared = self.shared.clone();
+        let Some(_cut) = stop.on_cut(move || shared.update(|state| state.stop = true)) else {
+            return Err(Error::adapter("capture open cancelled", Stopping));
+        };
+        self.wait_ready(timeout)
     }
 
     /// Wait up to `timeout` for a frame and take it; [`Pull::Quiet`] or
@@ -363,7 +375,6 @@ mod tests {
         while newest.is_none() {
             newest = owner.next_frame(LIMIT).unwrap().into_frame();
         }
-        // Frames may be taken before the last offer; never an older one after a newer.
         let mut last = newest.unwrap().as_slice()[0];
         while last < 3 {
             let frame = owner.next_frame(LIMIT).unwrap().into_frame().unwrap();
@@ -418,7 +429,6 @@ mod tests {
             Ok(())
         });
         let wakeup = sleeping.recv_timeout(LIMIT).unwrap();
-        // Before or during the first sleep: either way it ends it.
         assert!(wakeup.wake());
         awake.recv_timeout(LIMIT).unwrap();
         assert!(wakeup.wake());

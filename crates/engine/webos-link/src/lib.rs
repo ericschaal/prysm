@@ -45,6 +45,8 @@ pub enum Command {
     /// Input, app or picture mode changed: reopen the native tap. (A struct
     /// variant, so unknown fields are rejected like everywhere else.)
     ResetVideo {},
+    /// Whether the supervisor currently receives video change notifications.
+    ObserveVideo { available: bool },
     /// Full only: the lighting target the TV app chose. `sequence` counts
     /// the targets sent to this worker from 1; its status says the last one
     /// it applied ([`FullStatus::applied`]). A slim worker treats it as
@@ -53,11 +55,16 @@ pub enum Command {
         target: LightingTarget,
         sequence: u64,
     },
+    /// Full only: request On in the mode persisted by the engine.
+    Resume { sequence: u64 },
+    /// Full only: replace a previously requested Screen sync session after
+    /// the old process was reaped. Any override is still authoritative.
+    RecoverScreenSync { sequence: u64 },
 }
 
-/// The TV's main video output, as Luna `videooutput/getStatus` reports the
-/// `MAIN` sink. Also the webOS capture adapter's readiness input
-/// (`prysm_capture_webos::VideoSignal`).
+/// The TV's main video output. Open: an app reads a value it does not know
+/// as `unknown`.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Video {
@@ -77,6 +84,8 @@ pub enum Video {
 pub enum Event {
     /// Sent on every change and at least every [`HEARTBEAT`].
     Status(WorkerStatus),
+    /// The worker successfully initialized the operation it was started for.
+    Initialized {},
     /// Why the worker's run ends with an error (at startup or while
     /// running); it exits next. Not a status: a worker can fail before it
     /// has anything of its package to report. Not every failed exit is
@@ -165,42 +174,54 @@ pub struct SlimStatus {
     pub link: SlimLink,
 }
 
-/// Where the slim worker's uplink to the receiver stands, as
-/// `{ "state": … }`. Struct variants throughout, so unknown fields are
-/// rejected in every state.
+/// Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
+/// `starting`: no connection attempt yet. `sending`: connected, frames go
+/// out in `encoding` (the one the receiver requested, set in the desktop
+/// portal), `fps` per second (0 while none come). `refused`: connected, but
+/// the TV refuses to share the video it shows, so no frames go out; it ends
+/// when the video changes, not a failure. `paused`: the
+/// receiver stopped the stream because its lighting is off; the TV capture
+/// is released until a receiver takes a connection again, not a failure.
+/// `waiting`: the receiver is unavailable (not lighting, unreachable, or its
+/// name does not resolve); the worker keeps reconnecting, not a failure.
+/// `encoder_failed`: the encoder the receiver requested could not start or
+/// failed; the receiver is told, and another encoding chosen in its portal
+/// may work. `version_differs`: Prysm speaks another capture stream version;
+/// the older one needs updating, and the worker keeps reconnecting.
+/// `receiver_failed`: Prysm's receiving source failed with this TV's stream
+/// (a refusal, a keyframe that does not decode, no decoder), and Prysm shows
+/// why; the worker released the capture and keeps reconnecting. `message`
+/// says why, with the causes.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SlimLink {
-    /// No connection attempt yet.
     Starting {},
-    /// Connected: frames go out in `encoding` (always the one the receiver
-    /// requested), `fps` per second over about the last second, rounded; 0
-    /// while none come.
-    Sending { encoding: StreamEncoding, fps: u16 },
-    /// Connected, but the TV refuses to share the video it shows, so no
-    /// frames go out; it ends when the video changes. Not a failure.
+    Sending {
+        encoding: StreamEncoding,
+        /// Frames sent per second over about the last second, rounded.
+        #[cfg_attr(feature = "schema", schema(maximum = 65_535))]
+        fps: u16,
+    },
     Refused {},
-    /// The receiver stopped the stream (its lighting is off), and the TV
-    /// capture is released until a receiver takes a connection again. Not a
-    /// failure.
     Paused {},
-    /// The receiver is unavailable (its host is not lighting, is
-    /// unreachable or its name does not resolve), and why. The worker keeps
-    /// reconnecting. Not a failure.
-    Waiting { message: String },
-    /// The encoder the receiver requested could not start or failed. The
-    /// worker refuses that request (the receiver is told) until the
-    /// receiver asks for another; it never switches on its own.
-    EncoderFailed { message: String },
-    /// Prysm speaks another capture stream version than this TV app; the
-    /// older one needs updating. The worker keeps reconnecting, so an update
-    /// on either side is picked up without restarting it.
-    VersionDiffers { message: String },
-    /// Prysm's receiving source failed with this TV's stream (it refused the
-    /// request, a keyframe did not decode, or Prysm has no decoder); Prysm
-    /// shows why. The worker released the capture and keeps reconnecting, so
-    /// the next lighting start on the computer gets through.
-    ReceiverFailed { message: String },
+    Waiting {
+        message: String,
+    },
+    // Capture stalled and is waiting for a video signal change.
+    CaptureWaiting {
+        message: String,
+    },
+    // The worker keeps the requested encoding until the receiver chooses another.
+    EncoderFailed {
+        message: String,
+    },
+    VersionDiffers {
+        message: String,
+    },
+    ReceiverFailed {
+        message: String,
+    },
 }
 
 impl SlimLink {
@@ -208,6 +229,7 @@ impl SlimLink {
     pub fn message_mut(&mut self) -> Option<&mut String> {
         match self {
             Self::Waiting { message }
+            | Self::CaptureWaiting { message }
             | Self::EncoderFailed { message }
             | Self::VersionDiffers { message }
             | Self::ReceiverFailed { message } => Some(message),

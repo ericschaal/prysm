@@ -124,9 +124,18 @@ test('adjusting: the value shows, Reset clears it, a held slider lights before r
   await hue.focus();
   for (let tap = 0; tap < 3; tap += 1) await page.keyboard.press('ArrowRight');
   await expect(value).toHaveText('+3');
+  const savedHue = async () => {
+    const saved = await calibrations(prysm);
+    return saved.calibrations?.find(
+      (item) => item.id === saved.active_calibration,
+    )?.correction.red.hue;
+  };
+  // Each gesture starts from the value its predecessor persisted.
+  await expect.poll(savedHue).toBe(3);
   await page.getByRole('button', { name: 'Reset' }).click();
   await expect(value).toHaveText('0');
   await expect(hue).toHaveValue('0');
+  await expect.poll(savedHue).toBe(0);
 
   // Held: the lights try the value before the key comes up.
   await hue.focus();

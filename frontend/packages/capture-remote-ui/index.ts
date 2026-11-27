@@ -11,17 +11,10 @@ const defaults = captureDefaults.remote;
 export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   label: 'LG TV on your network',
   create: () => ({ kind: 'remote', ...defaults }),
-  optional: {
-    encoding: true,
-    fps: true,
-    height: true,
-    include_ui: true,
-    width: true,
-  },
+  optional: defaults,
   Editor: RemoteEditor,
   summary: (value) => `From the TV, ${describeTvPicture(value, defaults)}`,
   facts: (value) => tvPictureFacts(value, defaults),
-  // How the picture travels: H.264 (either encoder) or raw frames.
   transport: (value) =>
     (value.encoding ?? defaults.encoding) === 'raw' ? 'raw' : 'h264',
   setup: 'Give the TV app the address of this page.',

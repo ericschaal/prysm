@@ -37,8 +37,6 @@ async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_chan
         );
         assert_secure(&response);
         assert_eq!(portal.engine.colors_viewers(), 1);
-        // Listening to colors is not watching the preview: no frame is copied
-        // or encoded for it.
         assert_eq!(portal.engine.preview_viewers(), 0);
         let mut events = response.bytes_stream();
         let mut buffer = String::new();
@@ -60,7 +58,6 @@ async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_chan
             assert_eq!(event["type"], "colors");
         }
 
-        // The device's own effects are not Prysm's colors.
         assert_eq!(portal.target("effects").await.0, StatusCode::NO_CONTENT);
         let idle = next_state(&mut events, &mut buffer, |_| true).await;
         assert_eq!(idle, json!({ "type": "idle" }));

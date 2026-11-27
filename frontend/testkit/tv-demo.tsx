@@ -236,7 +236,6 @@ export function runDemo(
   for (const name of Object.keys(states)) tvState.add(new Option(name, name));
   tvState.onchange = () => {
     if (flavor === 'full' && tvState.value === 'TV: failure') {
-      // As on a TV: screen sync asked, then its session failed.
       application.publish({
         target: 'screen_sync',
         session: {

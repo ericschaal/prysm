@@ -78,12 +78,14 @@ futures = "0.3"
 # Data-parallel sampling on a dedicated pool (crates/engine/processor/src/workers.rs).
 rayon = "1.11"
 libloading = "0.9"
+once_cell = "1.21"
 nix = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The path of a field a settings body or adapter section does not decode at.
 serde_path_to_error = "0.1"
 signal-hook = "0.4"
+strum = { version = "0.28", features = ["derive"] }
 # A TCP connect that does not block, for WLED's state checks.
 socket2 = "0.6"
 tempfile = "3.27"

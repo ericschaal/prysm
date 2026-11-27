@@ -61,6 +61,22 @@ export default defineConfig(
     extends: [reactHooks.configs.flat.recommended],
   },
   {
+    files: [
+      'packages/application-client/http.ts',
+      'packages/webos-platform/index.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'TSAsExpression',
+          message:
+            'Validate external data against its generated contract before reading typed fields.',
+        },
+      ],
+    },
+  },
+  {
     // DOM tests run under node with jsdom globals.
     files: ['tests/**/*.{js,jsx,mjs}'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },

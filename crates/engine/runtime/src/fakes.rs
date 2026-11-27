@@ -4,9 +4,10 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, Escalation, FrameSink,
-    FrameSource, Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure,
-    OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span,
-    Stopping, ValidationError,
+    FrameSource, Hangup, IdleMode, LedOutput, LightingMode, LightingTarget, Mode, Modes,
+    OpenFailure, OpenIntent, OutputDisplay, OutputFactory, OutputIssue, OutputObservation,
+    OutputObservationState, OutputOpen, OutputRelease, Power, Pull, Readiness, Result, Settings,
+    SettingsStore, SourceFactory, Span, Stopping, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -36,6 +37,23 @@ impl CallLog {
         let mut calls = self.0.subscribe();
         let _ =
             futures::executor::block_on(calls.wait_for(|events| events.iter().any(|e| e == event)));
+    }
+
+    fn wait_for_gate(&self, event: &str, stop: &Hangup) -> bool {
+        let (wake, cut) = tokio::sync::oneshot::channel();
+        let Some(_registered) = stop.on_cut(move || {
+            let _ = wake.send(());
+        }) else {
+            return false;
+        };
+        let mut calls = self.0.subscribe();
+        let observed = calls.wait_for(|events| events.iter().any(|e| e == event));
+        futures::executor::block_on(async {
+            matches!(
+                futures::future::select(Box::pin(observed), cut).await,
+                futures::future::Either::Left((Ok(_), _))
+            )
+        })
     }
 
     pub fn record(&self, event: impl Into<String>) {
@@ -101,6 +119,18 @@ pub struct FakeSourceSettings {
     /// Report [`Pull::Ended`] after this many frames, like a file at its end.
     pub end_after: Option<u32>,
     pub fail_open: bool,
+    /// The first handle panics on pull, and the replacement panics in open.
+    pub crash_then_fail_init: bool,
+    /// The device is Waiting until this event is observed.
+    pub ready_on: Option<String>,
+    /// Readiness can only change through an explicit check.
+    pub manual_recheck: bool,
+    /// A source failure after this many frames may recover when this event occurs.
+    pub reconnect_on: Option<String>,
+    /// Hold local release until this test event occurs.
+    pub close_on: Option<String>,
+    /// Hold initialization until this test event or cancellation.
+    pub open_on: Option<String>,
     /// Block in `open` this long, like a device that does not answer.
     pub open_delay_ms: u64,
     /// Block in `modes`, after recording the call, until the log holds this
@@ -164,12 +194,66 @@ impl SourceFactory for FakeSources {
             self.0.record(format!("source.opening:{}", settings.name));
             thread::sleep(Duration::from_millis(settings.open_delay_ms));
         }
+        if settings.crash_then_fail_init
+            && self.0.count(&format!("source.open:{}", settings.name)) != 0
+        {
+            self.0
+                .record(format!("source.crashed_open:{}", settings.name));
+            panic!("fake source crashes in initialization");
+        }
         if settings.fail_open {
             self.0
                 .record(format!("source.open_failed:{}", settings.name));
             return Err(Error::other("fake source cannot open"));
         }
         Ok(Box::new(FakeSource::new(&self.0, settings.clone())))
+    }
+
+    fn open_for_sync(
+        &self,
+        settings: &FakeSourceSettings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn FrameSource>> {
+        if let Some(gate) = &settings.open_on {
+            self.0.record(format!("source.opening:{}", settings.name));
+            if !self.0.wait_for_gate(gate, stop) {
+                return Err(Error::adapter("capture open cancelled", Stopping));
+            }
+        }
+        self.open(settings)
+    }
+
+    fn check(&self, settings: &FakeSourceSettings, _: &Hangup) -> Readiness<Error> {
+        if settings.ready_on.is_some() {
+            self.0.record("source.check");
+        }
+        match settings.ready_on.as_deref() {
+            Some(gate) if self.0.count(gate) == 0 => {
+                if settings.manual_recheck {
+                    Readiness::Blocked(disconnected())
+                } else {
+                    Readiness::Waiting(disconnected())
+                }
+            }
+            _ => Readiness::Ready,
+        }
+    }
+
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        if error.cause::<Disconnected>().is_some() {
+            Readiness::Waiting(error)
+        } else {
+            Readiness::Blocked(error)
+        }
+    }
+
+    fn watch(&self, settings: &FakeSourceSettings, stop: &Hangup) -> Option<Readiness<Error>> {
+        self.0.record("source.monitor");
+        let gate = settings
+            .ready_on
+            .as_ref()
+            .or(settings.reconnect_on.as_ref())?;
+        self.0.wait_for_gate(gate, stop).then_some(Readiness::Ready)
     }
 
     /// The frame size the settings give, at 1 to 60 fps.
@@ -185,6 +269,21 @@ impl SourceFactory for FakeSources {
             Span::new(1, 60, 1).expect("a span"),
         ))
     }
+}
+
+#[derive(Debug)]
+struct Disconnected;
+
+impl std::fmt::Display for Disconnected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("fake capture disconnected")
+    }
+}
+
+impl std::error::Error for Disconnected {}
+
+fn disconnected() -> Error {
+    Error::adapter("capture no longer usable", Disconnected)
 }
 
 /// Produces a small black frame every two milliseconds.
@@ -213,13 +312,26 @@ impl FakeSource {
 
 impl FrameSource for FakeSource {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
-        if self.settings.fail_after.is_some_and(|n| self.frames >= n) {
+        assert!(
+            !self.settings.crash_then_fail_init,
+            "fake source crashes after startup"
+        );
+        if self.settings.fail_after.is_some_and(|n| self.frames >= n)
+            && self
+                .settings
+                .reconnect_on
+                .as_deref()
+                .is_none_or(|gate| self.log.count(gate) == 0)
+        {
             if let Some(gate) = &self.settings.fail_at {
                 self.log
                     .record(format!("source.failing:{}", self.settings.name));
                 self.log.block_until(gate);
             }
-            return Err(Error::other("fake source failed"));
+            return Err(match self.settings.reconnect_on {
+                Some(_) => disconnected(),
+                None => Error::other("fake source failed"),
+            });
         }
         if self.settings.end_after.is_some_and(|n| self.frames >= n) {
             return Ok(Pull::Ended);
@@ -260,6 +372,11 @@ impl FrameSource for FakeSource {
     }
 
     fn close(self: Box<Self>) -> Result<()> {
+        if let Some(gate) = &self.settings.close_on {
+            self.log
+                .record(format!("source.closing:{}", self.settings.name));
+            self.log.block_until(gate);
+        }
         thread::sleep(Duration::from_millis(self.settings.close_delay_ms));
         self.log
             .record(format!("source.close:{}", self.settings.name));
@@ -275,6 +392,9 @@ impl FrameSource for FakeSource {
 #[serde(default)]
 pub struct FakeOutputSettings {
     pub name: String,
+    pub startup: Option<FakeDisplay>,
+    pub unreachable_until: Option<String>,
+    pub observed_override: bool,
     /// Fail `write` after this many writes.
     pub fail_after: Option<u32>,
     /// With `fail_after`: record `output.failing:<name>`, then wait for
@@ -313,6 +433,26 @@ pub struct FakeOutputSettings {
     pub release_unanswered: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FakeDisplay {
+    Off,
+    Idle,
+    Live,
+    Override,
+}
+
+impl FakeDisplay {
+    fn observe(self) -> OutputObservationState {
+        let (power, display) = match self {
+            Self::Off => (Power::Off, OutputDisplay::Idle),
+            Self::Idle => (Power::On, OutputDisplay::Idle),
+            Self::Live => (Power::On, OutputDisplay::Live),
+            Self::Override => (Power::On, OutputDisplay::Override),
+        };
+        OutputObservationState::Observed(OutputObservation { power, display })
+    }
+}
+
 /// How a fake output's `open` goes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -340,6 +480,8 @@ pub enum FakeIdle {
     Idles,
     /// It fails, like a device that refuses it.
     Fails,
+    /// It waits for this event before refusing the command.
+    FailsAfter(String),
     /// It fails as lights that do not answer ([`Escalation::Unanswered`])
     /// until the log holds this event, a gate the test opens with
     /// [`CallLog::record`]; then it idles.
@@ -384,11 +526,22 @@ impl OutputFactory for FakeOutputs {
     }
 
     /// As [`FakeOutputSettings::open`] says.
-    fn open(
+    fn open_for_sync(
         &self,
         settings: &FakeOutputSettings,
+        intent: OpenIntent,
         stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
+    ) -> Result<OutputOpen, OpenFailure> {
+        if settings.startup.is_some() {
+            self.0
+                .record(format!("output.intent:{}:{intent:?}", settings.name));
+        }
+        if intent == OpenIntent::Resume
+            && matches!(settings.startup, Some(FakeDisplay::Override))
+            && let OutputObservationState::Observed(observation) = FakeDisplay::Override.observe()
+        {
+            return Ok(OutputOpen::Handoff(observation));
+        }
         let name = &settings.name;
         let untouched = |event: &str, error: Error| {
             self.0.record(format!("output.{event}:{name}"));
@@ -416,17 +569,83 @@ impl OutputFactory for FakeOutputs {
             }
         }
         self.0.record(format!("output.open:{}", settings.name));
-        Ok(Box::new(FakeOutput {
+        Ok(OutputOpen::Streaming(Box::new(FakeOutput {
             log: self.0.clone(),
             settings: settings.clone(),
             writes: 0,
-        }))
+        })))
     }
 
-    /// Records `output.idle:<name>:<mode>` as the output's own idle does,
-    /// without opening anything.
-    fn idle(&self, settings: &FakeOutputSettings, mode: IdleMode) -> Result<()> {
+    fn set_power(&self, settings: &FakeOutputSettings, power: Power, stop: &Hangup) -> Result<()> {
+        if stop.is_cut() {
+            return Err(Error::adapter("fake power request cancelled", Stopping));
+        }
+        let mode = match power {
+            Power::Off => IdleMode::Off,
+            Power::On => IdleMode::Native,
+        };
         idle(&self.0, settings, mode)
+    }
+
+    fn observe(
+        &self,
+        settings: &FakeOutputSettings,
+        _: &Hangup,
+    ) -> (Readiness<Error>, OutputObservationState) {
+        if settings
+            .unreachable_until
+            .as_deref()
+            .is_some_and(|gate| self.0.count(gate) == 0)
+        {
+            return (
+                Readiness::Waiting(Error::other_escalating(
+                    "fake output is unreachable",
+                    Escalation::Unanswered,
+                )),
+                OutputObservationState::Pending,
+            );
+        }
+        (
+            Readiness::Ready,
+            settings
+                .startup
+                .map_or(OutputObservationState::Unsupported, FakeDisplay::observe),
+        )
+    }
+
+    fn supports_effects(&self) -> bool {
+        true
+    }
+
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        if error.escalation() == Escalation::Unanswered {
+            Readiness::Waiting(error)
+        } else {
+            Readiness::Blocked(error)
+        }
+    }
+
+    fn watch(
+        &self,
+        settings: &FakeOutputSettings,
+        stop: &Hangup,
+    ) -> Option<(Readiness<Error>, OutputObservationState)> {
+        self.0.record("output.monitor");
+        let gate = settings
+            .unreachable_until
+            .as_ref()
+            .or(match &settings.idle {
+                FakeIdle::UnansweredUntil(gate) => Some(gate),
+                _ => None,
+            });
+        if let Some(gate) = gate {
+            self.0
+                .wait_for_gate(gate, stop)
+                .then(|| self.observe(settings, stop))
+        } else {
+            let _ = stop.wait(UNTIL_STOP);
+            None
+        }
     }
 
     /// One fake device, `{ "name": "found" }`.
@@ -483,7 +702,23 @@ impl LedOutput for FakeOutput {
         }
     }
 
-    fn idle(self: Box<Self>, mode: IdleMode, stop: &Hangup) -> Result<()> {
+    fn stream_observation(&self) -> OutputObservationState {
+        if self.settings.observed_override
+            && self
+                .settings
+                .overridden_after
+                .is_some_and(|n| self.writes >= n)
+        {
+            FakeDisplay::Override.observe()
+        } else {
+            OutputObservationState::Unsupported
+        }
+    }
+
+    fn release(self: Box<Self>, release: OutputRelease, stop: &Hangup) -> Result<()> {
+        let OutputRelease::Ordinary(mode) = release else {
+            return Ok(());
+        };
         if self.settings.release_until_stop && mode == IdleMode::Native {
             self.log
                 .record(format!("output.idle:{}:{mode:?}", self.settings.name));
@@ -512,6 +747,10 @@ fn idle(log: &CallLog, settings: &FakeOutputSettings, mode: IdleMode) -> Result<
     match &settings.idle {
         FakeIdle::Idles => Ok(()),
         FakeIdle::Fails => Err(Error::other("fake output cannot idle")),
+        FakeIdle::FailsAfter(gate) => {
+            log.block_until(gate);
+            Err(Error::other("fake output cannot idle"))
+        }
         FakeIdle::UnansweredUntil(gate) if !log.events().contains(gate) => Err(
             Error::other_escalating("fake output does not answer", Escalation::Unanswered),
         ),
@@ -531,7 +770,10 @@ impl FrameSink for FakeSink {
 
 /// In-memory settings; clones share the stored value.
 #[derive(Debug, Clone, Default)]
-pub struct MemoryStore(Arc<Mutex<Option<Settings>>>);
+pub struct MemoryStore {
+    settings: Arc<Mutex<Option<Settings>>>,
+    mode: Arc<Mutex<Option<LightingMode>>>,
+}
 
 impl MemoryStore {
     #[must_use]
@@ -541,12 +783,15 @@ impl MemoryStore {
 
     #[must_use]
     pub fn with(settings: Settings) -> Self {
-        Self(Arc::new(Mutex::new(Some(settings))))
+        Self {
+            settings: Arc::new(Mutex::new(Some(settings))),
+            ..Self::default()
+        }
     }
 
     #[must_use]
     pub fn saved(&self) -> Option<Settings> {
-        self.0
+        self.settings
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -559,7 +804,15 @@ impl SettingsStore for MemoryStore {
     }
 
     fn save(&mut self, settings: &Settings) -> Result<()> {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings.clone());
+        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings.clone());
+        Ok(())
+    }
+    fn load_mode(&mut self) -> Result<Option<LightingMode>> {
+        Ok(*self.mode.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    fn save_mode(&mut self, mode: LightingMode) -> Result<()> {
+        *self.mode.lock().unwrap_or_else(PoisonError::into_inner) = Some(mode);
         Ok(())
     }
 }

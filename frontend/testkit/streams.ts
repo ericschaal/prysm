@@ -1,10 +1,8 @@
-import { ApplicationError, type Failure } from '@prysm/application-client';
-
-/** An open fake stream, shaped like the client ports' streams. */
-export interface FakeStream<E> {
-  events: AsyncIterable<E>;
-  close(): void;
-}
+import {
+  ApplicationError,
+  type EventStream,
+  type Failure,
+} from '@prysm/application-client';
 
 /**
  * In-memory server-sent event streams: counts opens and closes, delivers
@@ -17,7 +15,7 @@ export function fakeEventStreams<E>() {
   let opened = 0;
   let closed = 0;
   let refusal: Failure | null = null;
-  const connect = (signal: AbortSignal): Promise<FakeStream<E>> => {
+  const connect = (signal: AbortSignal): Promise<EventStream<E>> => {
     if (refusal) {
       const failure = refusal;
       refusal = null;

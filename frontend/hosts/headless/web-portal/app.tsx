@@ -2,43 +2,15 @@ import type {
   CaptureSettings,
   OutputSettings,
 } from '@prysm/contracts/host-desktop';
-import type {
-  CaptureModesClient,
-  ColorsClient,
-  DiscoveryClient,
-  PreviewClient,
-} from '@prysm/application-client';
-import type { ApplicationRuntime } from '@prysm/application-state';
 import { WebPortal } from '@prysm/web-portal';
+import type { BrowserPortalProps } from '../../browser-portal';
 import { headlessCaptures, headlessOutputs } from './kinds';
 
-export type HeadlessCapture = CaptureSettings;
-export type HeadlessOutput = OutputSettings;
-
-export function HeadlessWebPortal({
-  application,
-  preview,
-  colors,
-  discovery,
-  captureModes,
-  replaced,
-}: {
-  application: ApplicationRuntime<HeadlessCapture, HeadlessOutput>;
-  preview?: PreviewClient;
-  colors?: ColorsClient;
-  discovery?: DiscoveryClient;
-  captureModes: CaptureModesClient;
-  replaced?: () => Promise<boolean>;
-}) {
+export function HeadlessWebPortal(props: BrowserPortalProps) {
   return (
-    <WebPortal
-      application={application}
+    <WebPortal<CaptureSettings, OutputSettings>
+      {...props}
       captures={headlessCaptures}
-      preview={preview}
-      colors={colors}
-      discovery={discovery}
-      captureModes={captureModes}
-      replaced={replaced}
       outputs={headlessOutputs}
     />
   );

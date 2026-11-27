@@ -33,7 +33,7 @@ pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<String>, nullable = false, max_length = 256, example = "http://192.168.1.20:8787")
+        schema(value_type = Option<String>, nullable = false, example = "http://192.168.1.20:8787")
     )]
     pub prysm_address: Option<PrysmAddress>,
 }
@@ -339,10 +339,8 @@ mod tests {
                 & 0o777,
             0o600
         );
-        // A reboot: autostart decides again.
         fs::write(&boot, "boot-2\n").unwrap();
         assert_eq!(store.resume(), None);
-        // Without a boot id nothing is kept.
         let mut store =
             FileStore::new(dir.path().join("tv.json")).with_boot_id(dir.path().join("missing"));
         store.remember(LightingTarget::ScreenSync).unwrap();
@@ -387,7 +385,6 @@ mod tests {
     #[test]
     fn unknown_fields_are_rejected_in_a_request() {
         assert!(serde_json::from_str::<Preferences>(r#"{"mode":"slim"}"#).is_err());
-        // Picture settings are the receiver's (slim) or the portal's (full).
         assert!(serde_json::from_str::<Preferences>(r#"{"capture":{"fps":30}}"#).is_err());
         let parsed: Preferences = serde_json::from_str(r#"{"autostart":true}"#).unwrap();
         assert!(parsed.autostart);
@@ -404,7 +401,6 @@ mod tests {
             "prysm_address": "http://192.168.1.20:8787",
             "newer": { "x": 1 },
         }));
-        // Full reads `autostart` and keeps the address it ignores.
         assert_eq!(
             file.preferences(Flavor::Full).unwrap(),
             Preferences {
@@ -421,7 +417,6 @@ mod tests {
                 "newer": { "x": 1 },
             })
         );
-        // Slim reads and replaces both.
         assert_eq!(
             file.preferences(Flavor::Slim).unwrap().prysm_address,
             Some(address)
@@ -431,11 +426,9 @@ mod tests {
             serde_json::to_value(&file).unwrap(),
             serde_json::json!({ "autostart": false, "newer": { "x": 1 } })
         );
-        // An address full ignores is never checked there; slim refuses it.
         let file = read(serde_json::json!({ "prysm_address": "http://x/path" }));
         file.preferences(Flavor::Full).unwrap();
         assert!(file.preferences(Flavor::Slim).is_err());
-        // A known field of the wrong type is unreadable in both.
         assert!(serde_json::from_str::<PreferencesFile>(r#"{"autostart":1}"#).is_err());
     }
 

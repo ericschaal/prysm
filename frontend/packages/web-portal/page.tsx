@@ -1,5 +1,4 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { DeveloperContext } from './developer';
 import { useChrome, useNav, usePortal } from './portal-context';
 import type { Place } from './routes';
 import { UpdatedNotice } from './update';
@@ -56,10 +55,6 @@ function Header({ settingsLink }: { settingsLink: boolean }) {
   );
 }
 
-/**
- * One page: the header, then the page's content under its (hidden) title.
- * `name` titles the browser tab: "Settings · Prysm"; without one, "Prysm".
- */
 export function Page({
   className,
   title,
@@ -76,7 +71,7 @@ export function Page({
   settingsLink?: boolean;
   children: ReactNode;
 }) {
-  const { developer, updated } = useChrome();
+  const { updated } = useChrome();
   return (
     <div className={wide ? 'portal wide' : 'portal'}>
       <title>{name ? `${name} · Prysm` : 'Prysm'}</title>
@@ -84,7 +79,7 @@ export function Page({
       <main id="content" className={className}>
         <h1 className="visually-hidden">{title}</h1>
         {updated ? <UpdatedNotice /> : null}
-        <DeveloperContext value={developer}>{children}</DeveloperContext>
+        {children}
       </main>
     </div>
   );

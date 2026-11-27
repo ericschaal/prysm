@@ -10,8 +10,6 @@ pub(super) enum Due {
     Calibration,
     /// The tried processing nobody tried again or saved is dropped.
     Trial,
-    /// The request the lights did not answer is tried again.
-    Again,
 }
 
 /// When each [`Due`] is, read from the state that holds it: the calibration
@@ -22,7 +20,6 @@ pub(super) enum Due {
 pub(super) struct Deadlines {
     calibration: Option<Instant>,
     trial: Option<Instant>,
-    again: Option<Instant>,
 }
 
 impl Deadlines {
@@ -32,7 +29,6 @@ impl Deadlines {
         let earliest = [
             (self.calibration, Due::Calibration),
             (self.trial, Due::Trial),
-            (self.again, Due::Again),
         ]
         .into_iter()
         .filter_map(|(at, due)| Some((at?, due)))
@@ -53,7 +49,6 @@ impl Core {
         Deadlines {
             calibration: self.calibration_expires,
             trial: self.trial.as_ref().map(|(_, at)| *at),
-            again: self.again(),
         }
     }
 }
@@ -69,19 +64,17 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_earliest_deadline_is_due() {
         let cases = [
-            ((Some(10), Some(5), Some(7)), Due::Trial, 5),
-            ((Some(3), Some(5), None), Due::Calibration, 3),
-            ((None, None, Some(2)), Due::Again, 2),
-            ((Some(4), Some(4), Some(4)), Due::Calibration, 4),
-            ((None, Some(6), Some(6)), Due::Trial, 6),
+            ((Some(10), Some(5)), Due::Trial, 5),
+            ((Some(3), Some(5)), Due::Calibration, 3),
+            ((None, Some(2)), Due::Trial, 2),
+            ((Some(4), Some(4)), Due::Calibration, 4),
         ];
-        for ((calibration, trial, again), expected, seconds) in cases {
+        for ((calibration, trial), expected, seconds) in cases {
             let start = Instant::now();
             let at = |seconds: Option<u64>| seconds.map(|s| start + Duration::from_secs(s));
             let deadlines = Deadlines {
                 calibration: at(calibration),
                 trial: at(trial),
-                again: at(again),
             };
             assert_eq!(deadlines.next().await, expected);
             assert_eq!(start.elapsed(), Duration::from_secs(seconds));

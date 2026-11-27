@@ -35,11 +35,9 @@ fn wss_through_a_tls_terminating_proxy() {
         .unwrap();
 
     if refusing {
-        // The test CA is not an authority here: verification fails.
         let source = portal.source(RAW);
         let error = RemoteSender::connect(&url, proxy, &prysm_capture_remote::testkit::offer())
             .unwrap_err();
-        // A certificate refusal naming the authority, not a lost connection.
         assert_eq!(
             error.cause::<WireError>(),
             Some(&WireError::Untrusted(
@@ -82,7 +80,6 @@ fn wss_through_a_tls_terminating_proxy() {
     let got = receive(&mut source);
     assert_eq!(got.as_slice(), frame.as_slice());
 
-    // Lighting off: the stopped close arrives through TLS as well.
     Box::new(source).close().unwrap();
     let error = eventually("the sender to notice the close", BOUND, || {
         sender.tick().err()

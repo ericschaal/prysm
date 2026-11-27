@@ -37,7 +37,7 @@ mod video;
 
 pub use settings::{MODE, WebosSettings};
 pub use source::{RELEASE, WebosFrames};
-pub use video::{Readiness, Video, VideoSignal};
+pub use video::{Readiness, RepeatedStall, Video, VideoSignal};
 
 /// What a webOS source's stop waits for: its pulls return within their
 /// timeout (frames come from its native thread), then `close` waits for the
@@ -48,7 +48,10 @@ pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
     close: RELEASE,
 };
 
-use prysm_ports::{FrameSource, Modes, Result, SourceFactory, ValidationError};
+use prysm_ports::{
+    Error, FrameSource, Hangup, Modes, Readiness as Availability, Result, SourceFactory,
+    ValidationError,
+};
 
 /// Opens the TV's video capture.
 #[derive(Debug, Clone, Default)]
@@ -94,6 +97,18 @@ impl SourceFactory for WebosCapture {
 
     fn open(&self, settings: &WebosSettings) -> Result<Box<dyn FrameSource>> {
         Ok(Box::new(self.start(settings)?))
+    }
+
+    fn check(&self, settings: &WebosSettings, _: &Hangup) -> Availability<Error> {
+        self.video.capture_readiness(settings)
+    }
+
+    fn failure(&self, error: Error) -> Availability<Error> {
+        self.video.failure(error)
+    }
+
+    fn watch(&self, settings: &WebosSettings, stop: &Hangup) -> Option<Availability<Error>> {
+        self.video.watch_stall(settings, stop)
     }
 
     /// [`MODE`], whatever the settings; `validate` enforces it.

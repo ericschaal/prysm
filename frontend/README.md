@@ -211,8 +211,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     playing, Home is shown, the browser tab is visible and the portal is
     connected (the portal counts viewers). On a phone-width card the
     drawing, otherwise hidden there, shows and takes the card's full width.
-    Hosts pass `httpPreviewClient()`; without a preview client there is
-    none.
+    Hosts pass the HTTP portal client as the optional `preview` port.
   - [Section editor](packages/web-portal/section-editor.tsx) with its
     [draft](packages/web-portal/draft.ts): the video source
     (`#/settings/video`) or the lights (`#/settings/lights`) on a page of
@@ -281,8 +280,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     "Lights" heading, "Other lights" and "Address"; "Smooth dark colours"
     under Advanced); the saved address has no problem line, since lights
     can answer and not be found, and picking one notes its LED count under
-    the drawing. Hosts pass `httpDiscoveryClient()`; without one there is
-    only the typed row.
+    the drawing. Hosts pass the HTTP portal client as the optional `discovery` port. Without it the editor shows only the typed row.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
   - [Size and rate](packages/web-portal/picture-choice.tsx): every capture
@@ -292,8 +290,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     hardware, a capture card's `device` or the TV's `encoding`; asked once
     for each, and again only when Try again is pressed under an answer that
     is not known, since nothing announces a device or a TV's offer;
-    hosts pass
-    `httpCaptureModesClient()`). The
+    hosts pass the HTTP portal client as `captureModes`). The
     [presets](packages/web-portal/picture-presets.ts) aim for Balanced
     (640 × 360, 30 fps), Smooth (640 × 360, 60 fps) and Efficient (320 × 180,
     30 fps); each is its target where a mode takes it, else the smallest

@@ -4,7 +4,7 @@
 //!
 //! Every decision is [`phase::next`]'s; this shell reads the clock and the
 //! signal, tells the machine what happened and performs what it asks.
-use super::phase::{self, Action, Ask, Event, Kind, Note, Occurrence, RefusalEnd, Rules, State};
+use super::phase::{self, Action, Event, Kind, Next, Note, Occurrence, RefusalEnd, Rules, State};
 use super::{Backend, Limits, Tap, UiTap};
 use crate::classify::{self, UiRecovery};
 use crate::{Readiness, VideoSignal, WebosSettings};
@@ -69,46 +69,48 @@ impl<B: Backend> Native<B> {
     fn capture(&mut self) -> Result<()> {
         self.video.wake(self.worker.wakeup());
         let mut state = State::new(Instant::now());
+
+        let mut event = self.event(&state);
         loop {
-            // A stop or a failure: the source ends after this step.
-            let mut ending = self.worker.stopped();
-            let mut event = if ending {
-                Event::Stop
-            } else {
-                self.signal(&state)
-            };
-            loop {
-                let step = phase::next(state, event, Instant::now(), &self.rules);
-                state = step.state;
-                for action in step.actions {
-                    match action {
-                        Action::Release => self.release_tap()?,
-                        Action::Deliver(frame) => self.worker.offer(frame),
-                        Action::TellRefused(refused) => self.worker.refused(refused),
-                        Action::Note(note) => log(note),
-                        Action::Sleep(wait) => self.worker.sleep(wait),
-                        Action::Idle => self.worker.idle(),
-                        // Published before the release, which can block.
-                        Action::Fail(error) => {
-                            self.worker.fail(error);
-                            ending = true;
-                        }
+            let step = phase::next(state, event, Instant::now(), &self.rules);
+            state = step.state;
+            for action in step.actions {
+                match action {
+                    Action::Release => self.release_tap()?,
+                    Action::Deliver(frame) => self.worker.offer(frame),
+                    Action::TellRefused(refused) => self.worker.refused(refused),
+                    Action::Note(note) => log(note),
+                    Action::Initialized => self.video.mark_initialized(),
+                    Action::ReportStall(error) => {
+                        let sequence = state.sequence().expect("a stalled tap followed video");
+                        self.worker
+                            .fail(self.video.stalled(sequence, self.settings, error));
                     }
+                    // Published before the release, which can block.
+                    Action::Fail(error) => self.worker.fail(error),
                 }
-                event = match step.ask {
-                    Some(Ask::Open(kind)) => self.open(kind),
-                    Some(Ask::Acquire) => self.acquire(),
-                    None => break,
-                };
             }
-            if ending {
-                return Ok(());
-            }
+            event = match step.next {
+                Next::Open(kind) => self.open(kind),
+                Next::Acquire => self.acquire(),
+                Next::Sleep(wait) => {
+                    self.worker.sleep(wait);
+                    self.event(&state)
+                }
+                Next::Idle => {
+                    self.worker.idle();
+                    self.event(&state)
+                }
+                Next::End => return Ok(()),
+            };
         }
     }
 
-    /// The signal as an event: a change when its sequence is new.
-    fn signal(&self, state: &State) -> Event {
+    /// After waiting, stop takes precedence over a change of signal.
+    fn event(&self, state: &State) -> Event {
+        if self.worker.stopped() {
+            return Event::Stop;
+        }
         let readiness = self.video.current();
         if state.sequence() == Some(readiness.sequence) {
             Event::Woke

@@ -10,10 +10,11 @@ import {
   press,
   pressUntil,
   settled,
+  startScreenSync,
   type Flavor,
 } from './remote';
 
-const start = { full: 'mode-off', slim: 'primary' } as const;
+const start = { full: 'light-power', slim: 'primary' } as const;
 const settingsTop = { full: 'autostart', slim: 'prysm-address' } as const;
 const slots = {
   full: [
@@ -143,9 +144,7 @@ for (const flavor of ['full', 'slim'] as const) {
 async function lightsOn(page: Page, flavor: Flavor) {
   await openTv(page, flavor, { focus: start[flavor] });
   if (flavor === 'full') {
-    await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
-    await press(page, 'Enter');
-    await expect(page.locator('#status-title')).toHaveText('Screen sync on');
+    await startScreenSync(page);
   } else {
     await press(page, 'Enter');
     await expect(page.locator('#primary')).toHaveText('Stop capture');

@@ -1,5 +1,10 @@
 import type { LedCounts } from '@prysm/contracts/host-desktop';
-import type { Corner, Edge, LedEdges, Wire } from '@prysm/web-portal';
+import {
+  clockwiseWires,
+  type Corner,
+  type Edge,
+  type LedEdges,
+} from '@prysm/web-portal';
 
 /**
  * The total LED count Prysm accepts: at most `MAX_LEDS` in `output-wled`,
@@ -16,21 +21,11 @@ export const ledEdgeLimits = { min: 0, max: 16384, step: 1 } as const;
  * LEDs is skipped.
  */
 export const wiring = [
-  { edge: 'left', from: 'bottom-left', to: 'top-left', direction: 'upward' },
-  { edge: 'top', from: 'top-left', to: 'top-right', direction: 'rightward' },
-  {
-    edge: 'right',
-    from: 'top-right',
-    to: 'bottom-right',
-    direction: 'downward',
-  },
-  {
-    edge: 'bottom',
-    from: 'bottom-right',
-    to: 'bottom-left',
-    direction: 'leftward',
-  },
-] as const satisfies readonly (Wire & { direction: string })[];
+  clockwiseWires.left,
+  clockwiseWires.top,
+  clockwiseWires.right,
+  clockwiseWires.bottom,
+] as const;
 
 export interface LedRun {
   edge: Edge;

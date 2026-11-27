@@ -10,6 +10,7 @@ import {
   press,
   pressUntil,
   settled,
+  startScreenSync,
   type Flavor,
 } from './remote';
 
@@ -63,27 +64,23 @@ const dialogs = (flavor: Flavor, focus: string): Screen[] => [
 ];
 
 const screens: Screen[] = [
-  { flavor: 'full', name: 'Home, lights off', focus: 'mode-off' },
+  { flavor: 'full', name: 'Home, lights off', focus: 'light-power' },
   {
     flavor: 'full',
     name: 'Home, screen sync on',
-    focus: 'mode-off',
+    focus: 'light-power',
     reach: async (page) => {
-      await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
-      await press(page, 'Enter');
-      await expect(page.locator('#status-title')).toHaveText('Screen sync on');
+      await startScreenSync(page);
     },
   },
   {
     flavor: 'full',
-    name: 'Home, failure with Try again',
-    focus: 'mode-off',
+    name: 'Home, blocked capture with Power off',
+    focus: 'light-power',
     reach: async (page) => {
-      // As on a TV: screen sync asked, then its session failed; the worker
-      // reports the failure to the supervisor.
       await page.evaluate(() =>
         window.demo.application.publish({
-          target: 'screen_sync',
+          target: 'off',
           session: {
             state: 'stopped',
             failure: {
@@ -94,8 +91,18 @@ const screens: Screen[] = [
           },
         }),
       );
-      await expect(page.locator('#primary')).toHaveText('Try again');
-      await expect(page.locator('#primary')).toBeFocused();
+      await expect(page.locator('#status-title')).toHaveText('Lights off');
+      await expect(page.locator('#lighting-status')).toContainText(
+        'The video source isn’t working.',
+      );
+      await expect(page.locator('#light-power')).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+      await expect(page.locator('#light-power')).toBeEnabled();
+      await expect(
+        page.getByRole('group', { name: 'Lighting mode' }).getByRole('button'),
+      ).toHaveCount(1);
       await settled(page);
       await expectFocus(page);
     },
@@ -112,7 +119,7 @@ const screens: Screen[] = [
     flags: ['nolights'],
     focus: 'service-options',
   },
-  ...dialogs('full', 'mode-off'),
+  ...dialogs('full', 'light-power'),
   { flavor: 'slim', name: 'Home, capture off', focus: 'primary' },
   {
     flavor: 'slim',

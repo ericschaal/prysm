@@ -1,18 +1,7 @@
-//! The engine: one Tokio task, the only mailbox, owning settings and at most
-//! one session. This file starts it and runs its loop; each subject the loop
-//! hands work to has its own module:
-//!
-//! - `handle`: [`EngineHandle`], what clients call, and the commands it sends.
-//! - `lookups`: candidates and capture modes, which bypass the mailbox.
-//! - `settings`: the store, saves, calibration, tried processing, the config.
-//! - `lighting`: what the lights are doing and what each happening leaves;
-//!   its children drive them (target, session end, the wait for the lights)
-//!   and publish them.
-//! - `shutdown`: the shutdown sequence and blocking calls it may abandon.
-//! - `deadlines`: what is due without a command, waited for as one timer.
+//! The engine task owns settings and at most one session. Candidate and mode lookups bypass its mailbox.
+mod control;
 mod deadlines;
 mod handle;
-mod lighting;
 mod lookups;
 mod settings;
 mod shutdown;
@@ -21,13 +10,15 @@ pub use handle::EngineHandle;
 pub use settings::{CALIBRATION_TIMEOUT, TRIAL_TIMEOUT};
 
 use crate::feeds::Feeds;
+use crate::intent::LightingIntent;
 use crate::stats::Stats;
+use control::Lighting;
 use deadlines::Due;
 use handle::{Command, Request};
-use lighting::{Event, Lighting, next};
 use lookups::Lookups;
 use prysm_ports::{
-    Error, Processing, Registry, Result, SessionState, Settings, SettingsStore, Snapshot,
+    Error, LightingMode, Processing, Registry, Result, SessionState, Settings, SettingsStore,
+    Snapshot,
 };
 use settings::{Store, first_revision, lock};
 use shutdown::blocking;
@@ -61,12 +52,19 @@ impl Engine {
         stop_deadline: Duration,
     ) -> Result<(EngineHandle, Self)> {
         let store: Store = Arc::new(Mutex::new(store));
-        let (loaded, unreadable) = match blocking({
+        let (loaded, remembered) = blocking({
             let store = store.clone();
-            move || lock(&store).load()
+            move || {
+                let mut store = lock(&store);
+                (store.load(), store.load_mode())
+            }
         })
-        .await?
-        {
+        .await?;
+        let remembered = remembered.unwrap_or_else(|error| {
+            tracing::warn!(error = %prysm_ports::chain(&error), "the previous mode could not be read");
+            None
+        });
+        let (loaded, unreadable) = match loaded {
             Ok(loaded) => (loaded.unwrap_or_default(), None),
             Err(error) => {
                 tracing::warn!(
@@ -79,10 +77,17 @@ impl Engine {
                 )
             }
         };
-        let failure = unreadable
-            .clone()
-            .or_else(|| registry.validate(&loaded).err());
+        let supports_effects = loaded
+            .output
+            .as_ref()
+            .is_none_or(|output| registry.supports_effects(output));
+        let intent = LightingIntent::new(remembered, supports_effects);
+        let ports = control::Ports::new(&registry, &loaded, unreadable.as_ref());
+        let failure = unreadable.clone().or_else(|| ports.failure.clone());
+        let lighting = Lighting::new(intent, ports);
+        let persisted_mode = remembered;
         let (state, snapshot) = watch::channel(Snapshot {
+            control: lighting.control(),
             session: SessionState::Stopped { failure },
             settings: loaded,
             revision: first_revision(),
@@ -96,7 +101,8 @@ impl Engine {
             registry: registry.clone(),
             store,
             unreadable,
-            lighting: Lighting::Stopped,
+            lighting,
+            persisted_mode,
             calibration_expires: None,
             trial: None,
             feeds: feeds.clone(),
@@ -143,6 +149,7 @@ struct Core {
     /// replaces what it holds.
     unreadable: Option<Error>,
     lighting: Lighting,
+    persisted_mode: Option<LightingMode>,
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
     /// Processing being tried instead of the saved one, and when it ends.
@@ -159,22 +166,21 @@ struct Core {
 
 impl Core {
     async fn run(mut self, mut inbox: mpsc::Receiver<Command>) {
+        self.check_output();
         loop {
             let deadlines = self.deadlines();
             let command = tokio::select! {
+                biased;
                 command = inbox.recv() => command,
-                event = next(&mut self.lighting) => {
-                    match event {
-                        Event::Ended(end) => self.session_ended(end).await,
-                        Event::Measure => self.measure(),
-                    }
+                event = self.lighting.next() => {
+                    self.lighting_event(event).await;
+                    self.persist_mode().await;
                     continue;
                 }
                 due = deadlines.next() => {
                     match due {
                         Due::Calibration => self.calibrate(None),
                         Due::Trial => self.reconfigure(|core| core.trial = None),
-                        Due::Again => self.try_again().await,
                     }
                     continue;
                 }
@@ -191,13 +197,10 @@ impl Core {
                 Some(Command::SurfaceFailed(error)) => {
                     self.state.send_modify(|s| s.surface_failures.push(error));
                 }
-                Some(Command::Request(request)) => {
-                    self.settle().await;
-                    match self.refusal() {
-                        Some(error) => request.refuse(error),
-                        None => self.handle(request).await,
-                    }
-                }
+                Some(Command::Request(request)) => match self.refusal() {
+                    Some(error) => request.refuse(error),
+                    None => self.handle(request).await,
+                },
             }
         }
     }
@@ -206,7 +209,7 @@ impl Core {
     /// restart recovers; or shutdown was asked for, and a request still
     /// queued would start what it stops.
     fn refusal(&self) -> Option<Error> {
-        if let Lighting::Faulted(phase) = self.lighting {
+        if let Some(phase) = self.lighting.fault() {
             return Some(Error::Faulted(phase));
         }
         self.abandon_at.borrow().is_some().then_some(Error::Closed)
@@ -215,7 +218,27 @@ impl Core {
     async fn handle(&mut self, request: Request) {
         match request {
             Request::SetTarget(target, reply) => {
-                let _ = reply.send(self.set_target(target).await);
+                self.set_target(target);
+                self.persist_mode().await;
+                let _ = reply.send(Ok(()));
+            }
+            Request::ResumeScreenSync(reply) => {
+                self.resume_screen_sync();
+                self.persist_mode().await;
+                let _ = reply.send(Ok(()));
+            }
+            Request::PressPower(reply) => {
+                self.press_power();
+                self.persist_mode().await;
+                let _ = reply.send(Ok(()));
+            }
+            Request::Pause(reply) => {
+                self.pause_lighting();
+                let _ = reply.send(Ok(()));
+            }
+            Request::Recheck(reply) => {
+                self.recheck_lighting();
+                let _ = reply.send(Ok(()));
             }
             Request::SetCalibration(calibration, reply) => {
                 let _ = reply.send(self.set_calibration(calibration));
@@ -228,7 +251,9 @@ impl Core {
                 settings,
                 reply,
             } => {
-                let _ = reply.send(self.replace_settings(expected, *settings).await);
+                let result = self.replace_settings(expected, *settings).await;
+                self.persist_mode().await;
+                let _ = reply.send(result);
             }
         }
     }

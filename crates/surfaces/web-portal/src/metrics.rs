@@ -1,70 +1,19 @@
 //! `GET /metrics`: the engine's totals and a few snapshot fields in the
 //! Prometheus text format 0.0.4, rendered by hand. Every label value is a
 //! fixed word from a closed set, so nothing needs escaping.
-use prysm_ports::{LightingTarget, SessionState, Snapshot};
+use prysm_ports::Snapshot;
 use prysm_runtime::{Counters, Timing};
 use std::fmt::{self, Display, Write};
+use strum::VariantNames;
 
 pub(crate) const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
-/// The session state without its failure or the faulted phase, to keep the
-/// label set small.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum State {
-    Stopped,
-    ScreenSync,
-    Effects,
-    Unanswered,
-    Faulted,
-}
-
-impl State {
-    const ALL: [Self; 5] = [
-        Self::Stopped,
-        Self::ScreenSync,
-        Self::Effects,
-        Self::Unanswered,
-        Self::Faulted,
-    ];
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Stopped => "stopped",
-            Self::ScreenSync => "screen_sync",
-            Self::Effects => "effects",
-            Self::Unanswered => "unanswered",
-            Self::Faulted => "faulted",
-        }
-    }
-}
-
-impl From<&SessionState> for State {
-    fn from(state: &SessionState) -> Self {
-        match state {
-            SessionState::Stopped { .. } => Self::Stopped,
-            SessionState::ScreenSync => Self::ScreenSync,
-            SessionState::Effects { .. } => Self::Effects,
-            SessionState::Unanswered { .. } => Self::Unanswered,
-            SessionState::Faulted(_) => Self::Faulted,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
+#[derive(strum::Display)]
+#[strum(serialize_all = "lowercase")]
 enum Kind {
     Counter,
     Gauge,
     Summary,
-}
-
-impl Kind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Counter => "counter",
-            Self::Gauge => "gauge",
-            Self::Summary => "summary",
-        }
-    }
 }
 
 /// Collects the exposition text; `fmt::Write` into a `String` cannot fail.
@@ -77,7 +26,6 @@ impl Text {
     }
 
     fn header(&mut self, name: &str, kind: Kind, help: &str) {
-        let kind = kind.name();
         self.line(format_args!("# HELP {name} {help}\n# TYPE {name} {kind}"));
     }
 
@@ -98,19 +46,18 @@ impl Text {
     }
 
     /// One 0/1 sample per label value, 1 for the current one.
-    fn one_of<T: Copy + PartialEq>(
+    fn one_of<T: VariantNames + AsRef<str>>(
         &mut self,
         name: &str,
         help: &str,
         label: &str,
-        all: &[T],
-        current: T,
-        value_name: impl Fn(T) -> &'static str,
+        current: &T,
     ) {
         self.header(name, Kind::Gauge, help);
-        for &value in all {
-            let (value_name, sample) = (value_name(value), u8::from(value == current));
-            self.line(format_args!("{name}{{{label}=\"{value_name}\"}} {sample}"));
+        let current = current.as_ref();
+        for &variant in T::VARIANTS {
+            let sample = u8::from(variant == current);
+            self.line(format_args!("{name}{{{label}=\"{variant}\"}} {sample}"));
         }
     }
 }
@@ -126,17 +73,13 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
         "prysm_target",
         "What the user asked the LEDs to do; 1 for the current target.",
         "target",
-        &LightingTarget::ALL,
-        snapshot.target,
-        LightingTarget::as_str,
+        &snapshot.target,
     );
     text.one_of(
         "prysm_session_state",
         "What the runtime is doing; 1 for the current state.",
         "state",
-        &State::ALL,
-        State::from(&snapshot.session),
-        State::name,
+        &snapshot.session,
     );
     text.gauge(
         "prysm_settings_revision",
@@ -194,7 +137,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::{Input, Picture, Revision, SessionPhase};
+    use prysm_ports::{Input, LightingTarget, Picture, Revision, SessionPhase, SessionState};
     use std::time::Duration;
 
     #[test]

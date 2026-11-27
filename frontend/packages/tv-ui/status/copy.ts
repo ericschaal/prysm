@@ -2,18 +2,14 @@
  * The status card's words that both packages use, and the primary
  * button's labels.
  */
+import { outputIssueHeadline, type Picture } from '@prysm/application-client';
 import {
-  outputIssueHeadline,
-  unreachable,
-  type Picture,
-} from '@prysm/application-client';
-import type { Fix, Flavor } from '@prysm/webos-platform';
-import type {
-  Button,
-  NoPicture,
-  PrimaryAction,
-  SharedSituation,
-} from './situation';
+  isEnabled,
+  type Asked,
+  type Flavor,
+  type State,
+} from '@prysm/webos-platform';
+import type { Button, PrimaryAction } from './situation';
 
 /**
  * The title while the TV refuses to share the video it shows; the lights
@@ -58,6 +54,8 @@ export interface Copy {
   title: string;
   description: string;
   attention: boolean;
+  button?: Button;
+  setupLights?: boolean;
 }
 
 /** Before a state: waiting for the service's first reply, or no service. */
@@ -65,36 +63,56 @@ export const linkCopy: Record<'connecting' | 'missing', Copy> = {
   connecting: {
     title: 'Connecting…',
     description: 'Checking Prysm on this TV.',
+    button: 'wait',
     attention: false,
   },
   missing: {
     title: 'Prysm needs setting up',
     description: 'Set up its service on this TV to start.',
+    button: 'setup',
     attention: true,
   },
 };
 
-/**
- * What the service asks that both packages word alike; each package words
- * trying again and changing the settings its own way.
- */
-export const sharedFixCopy = {
-  set_up: linkCopy.missing,
-  unsupported: {
-    title: 'Capture not supported',
-    description: 'This TV doesn’t let Prysm capture its picture.',
-    attention: true,
-  },
-  // A worker that did not end holds the capture.
-  restart_tv: {
-    title: 'Restart the TV',
-    description: 'Prysm can’t capture again until the TV restarts.',
-    attention: true,
-  },
-} satisfies Partial<Record<Fix, Copy>>;
+export function note(title: string, description: string): Copy {
+  return { title, description, attention: false };
+}
+export function warning(title: string, description: string): Copy {
+  return { title, description, attention: true };
+}
 
-/** The lights don't answer, and Prysm stopped trying: as the lights card heads it. */
-export const UNANSWERED = outputIssueHeadline('unreachable');
+export function problemCopy(asked: Asked, title: string, flavor: Flavor): Copy {
+  if (asked.step === 'unanswered')
+    return warning(
+      outputIssueHeadline('unreachable'),
+      flavor === 'full'
+        ? 'Prysm stopped trying. Check them, then try again.'
+        : 'Prysm stopped trying. Check Prysm, then try again.',
+    );
+  switch (asked.fix) {
+    case 'try_again':
+      return warning(title, 'Something went wrong. Try again to restart it.');
+    case 'change_settings':
+      return warning(
+        title,
+        flavor === 'full'
+          ? 'Change the settings in the web portal.'
+          : 'Change the settings in Prysm’s web portal.',
+      );
+    case 'set_up':
+      return linkCopy.missing;
+    case 'unsupported':
+      return warning(
+        'Capture not supported',
+        'This TV doesn’t let Prysm capture its picture.',
+      );
+    case 'restart_tv':
+      return warning(
+        'Restart the TV',
+        'Prysm can’t capture again until the TV restarts.',
+      );
+  }
+}
 
 /** The primary button's label and what it does. */
 export const buttons: Record<Button, { label: string; action: PrimaryAction }> =
@@ -108,73 +126,54 @@ export const buttons: Record<Button, { label: string; action: PrimaryAction }> =
     start: { label: 'Start capture', action: 'enable' },
   };
 
-/** What the package stops, stopped, and continues when the TV wakes up. */
-export const packageWords: Record<
-  Flavor,
-  { stopping: string; stopped: string; wakes: string }
-> = {
+/** How the package describes stopping and waking. */
+const packageWords: Record<Flavor, { stopping: string; wakes: string }> = {
   full: {
     stopping: 'Restarting Prysm…',
-    stopped: 'Screen sync stopped',
     wakes: 'Screen sync continues when the TV wakes up.',
   },
   slim: {
     stopping: 'Stopping capture…',
-    stopped: 'Capture stopped',
     wakes: 'Capture continues when the TV wakes up.',
   },
 };
 
-/** The words of a situation both packages have, in `flavor`'s words. */
-export function sharedCopy(situation: SharedSituation, flavor: Flavor): Copy {
-  const words = packageWords[flavor];
-  switch (situation.kind) {
-    case 'stopping':
-      return {
-        title: words.stopping,
-        description: 'This takes a moment.',
-        attention: false,
-      };
-    case 'setUpLights':
-      return {
-        title: 'Set up your lights',
-        description: 'You add them from your phone, in the web portal.',
-        attention: true,
-      };
-    case 'updating':
-      // The service is newer than this app, as during an update.
-      return {
-        title: 'Updating…',
-        description: 'Update this app if this stays.',
-        attention: false,
-      };
-    case 'unreadable':
-      return {
-        title: 'Couldn’t read settings',
-        description: 'Change a setting below to save new ones.',
-        attention: true,
-      };
-    case 'asleep':
-      return {
-        title:
-          situation.power === 'screen_saver'
-            ? 'Screen saver is on'
-            : 'TV is asleep',
-        description: words.wakes,
-        attention: false,
-      };
-    case 'noVideo':
-      return {
-        title: 'Waiting for video',
-        description: 'Choose an input or play something on the TV.',
-        attention: false,
-      };
-    default:
-      return unreachable(situation);
-  }
+export function stopping(flavor: Flavor): Copy {
+  return note(packageWords[flavor].stopping, 'This takes a moment.');
 }
 
-/** The capture gives no picture: neither is a failure. */
-export function noPictureCopy({ picture }: NoPicture, flavor: Flavor): Copy {
+export const setupLights = {
+  ...warning(
+    'Set up your lights',
+    'You add them from your phone, in the web portal.',
+  ),
+  setupLights: true,
+};
+export const updating = note('Updating…', 'Update this app if this stays.');
+
+export function tvCopy(state: State): Copy | null {
+  if (state.unreadable !== undefined)
+    return warning(
+      'Couldn’t read settings',
+      'Change a setting below to save new ones.',
+    );
+  if (!isEnabled(state)) return null;
+  if (state.power !== 'active')
+    return note(
+      state.power === 'screen_saver' ? 'Screen saver is on' : 'TV is asleep',
+      packageWords[state.flavor].wakes,
+    );
+  if (state.video === 'unavailable')
+    return note(
+      'Waiting for video',
+      'Choose an input or play something on the TV.',
+    );
+  return null;
+}
+
+export function noPictureCopy(
+  picture: Exclude<Picture, 'arriving'>,
+  flavor: Flavor,
+): Copy {
   return { ...waitingStatus[picture][flavor], attention: false };
 }

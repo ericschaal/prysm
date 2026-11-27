@@ -1,98 +1,236 @@
-//! The pipeline's nodes and the one mapping of [`Config`] onto them.
+use crate::Stage;
+use crate::frames::{FrameView, Viewport};
 use crate::nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
-use prysm_core::{ColorCorrection, Config, DarkFloorPercent, LinearColor, SaturationBoostPercent};
+use crate::workers::Workers;
+use prysm_core::{Config, EdgeColors, Frame, PixelFormat};
+use std::num::NonZeroUsize;
+use std::time::Instant;
 
-/// The nodes, in pipeline order. [`Self::configure`] is the only place that
-/// turns settings into nodes; the sampler reads its settings from the
-/// [`Config`] it is given with each frame.
+/// Stateful frame processor.
+///
+/// Detection keeps the raw capture format; sampling reads RGB, YUYV and NV12 in
+/// place, without a full-frame conversion, before reducing the picture to a grid
+/// and projecting onto the perimeter.
+/// Colour focus, when set, then lets each sample keep the hue next to it.
+/// Pictures above the 640×360 pixel budget are sampled on a lattice;
+/// grid dimensions and edge sample counts use the scaled picture size.
+///
+/// Cell averaging and colour focus may run on a small dedicated thread pool
+/// owned by the processor (see [`Self::with_threads`]); each call still
+/// returns only when its frame is done, with the same colours on any number
+/// of threads.
 #[derive(Debug)]
-pub(crate) struct Pipeline {
-    pub(crate) detector: Option<BlackBarDetector>,
-    pub(crate) sampler: SpatialSampler,
-    pub(crate) smoother: Option<TemporalSmoother>,
-    pub(crate) output: Option<OutputStage>,
+pub struct PrysmProcessor {
+    pipeline: Pipeline,
+    layout: Option<FrameLayout>,
+    last_viewport: Option<Viewport>,
+    workers: Workers,
 }
 
-impl Pipeline {
-    pub(crate) fn new(config: &Config) -> Self {
-        let mut pipeline = Self {
-            detector: None,
-            sampler: SpatialSampler::default(),
-            smoother: None,
-            output: None,
-        };
-        pipeline.configure(config);
-        pipeline
+/// Settings and nodes in processing order, configured together.
+#[derive(Debug)]
+struct Pipeline {
+    config: Config,
+    detector: Option<BlackBarDetector>,
+    sampler: SpatialSampler,
+    smoother: Option<TemporalSmoother>,
+    /// Final brightness multiplier; absent when all output adjustments are neutral.
+    output_gain: Option<f32>,
+}
+
+/// A layout change restarts black-bar detection and temporal history.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FrameLayout {
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+}
+
+impl FrameLayout {
+    /// Whether frames of this layout can be sampled: empty frames cannot.
+    fn is_sampled(self) -> bool {
+        self.width > 0 && self.height > 0
+    }
+}
+
+impl PrysmProcessor {
+    /// A processor that samples on half the machine's cores, at most three
+    /// threads, so the rest of the system keeps the other half; below four
+    /// cores it uses the calling thread alone.
+    pub fn new(config: &Config) -> Self {
+        Self::with_threads(config, Workers::automatic_threads())
     }
 
-    /// Applies `config`. A node that stays on keeps what it has learned:
-    /// black-bar evidence and crops, and temporal history. A node switched
-    /// on starts afresh; one switched off is dropped.
-    pub(crate) fn configure(&mut self, config: &Config) {
-        self.detector = config
+    /// A processor that samples on `threads` dedicated pool threads, never
+    /// rayon's global pool. With one thread it creates no pool and runs on
+    /// the calling thread. The pool's threads end when the processor is dropped.
+    pub fn with_threads(config: &Config, threads: NonZeroUsize) -> Self {
+        let mut processor = Self {
+            pipeline: Pipeline {
+                config: *config,
+                detector: None,
+                sampler: SpatialSampler::default(),
+                smoother: None,
+                output_gain: None,
+            },
+            layout: None,
+            last_viewport: None,
+            workers: Workers::new(threads),
+        };
+        processor.configure(config);
+        processor
+    }
+
+    /// Confirmed sampling area of the last supported frame, in source pixels.
+    #[must_use]
+    pub fn viewport(&self) -> Option<Viewport> {
+        self.last_viewport
+    }
+
+    /// Apply processing settings without discarding unrelated temporal history.
+    /// Call this when configuration changes, before processing the next frame.
+    pub fn configure(&mut self, config: &Config) {
+        let pipeline = &mut self.pipeline;
+        pipeline.detector = config
             .remove_black_bars
-            .then(|| self.detector.take().unwrap_or_default());
-        self.smoother = match self.smoother.take() {
+            .then(|| pipeline.detector.take().unwrap_or_default());
+        pipeline.smoother = match pipeline.smoother.take() {
             Some(smoother) => smoother.reconfigured(config),
             None => TemporalSmoother::new(config),
         };
-        self.output = OutputStage::new(config);
+        let gain = config.brightness_percent.as_ratio();
+        pipeline.output_gain = (!config.saturation_boost_percent.is_neutral()
+            || !config.dark_floor_percent.is_neutral()
+            || !config.correction.is_identity()
+            || gain < 1.0)
+            .then_some(gain);
+        pipeline.config = *config;
+    }
+
+    /// Process a single frame using the current monotonic time for smoothing.
+    #[cfg(feature = "testkit")]
+    pub fn process_frame(&mut self, frame: Frame) -> EdgeColors {
+        self.process_frame_at(frame, Instant::now())
+    }
+
+    /// Process a frame at an explicit monotonic time, for deterministic replay.
+    /// Both black-bar confirmation and smoothing use this clock.
+    /// Use a shared clock origin plus source timestamps when replaying video.
+    /// Repeated or earlier times do not advance smoothing.
+    pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
+        self.process_frame_staged(frame, now, |_| {})
+    }
+
+    /// [`Self::process_frame_at`], calling `mark` as each stage that ran
+    /// ends, in pipeline order: a timing hook for the processor benchmark.
+    #[doc(hidden)]
+    pub fn process_frame_staged(
+        &mut self,
+        frame: Frame,
+        now: Instant,
+        mut mark: impl FnMut(Stage),
+    ) -> EdgeColors {
+        let layout = FrameLayout {
+            width: frame.width(),
+            height: frame.height(),
+            format: frame.format(),
+        };
+        if self.layout != Some(layout) {
+            self.reset();
+            self.last_viewport = None;
+            self.layout = Some(layout);
+            if !layout.is_sampled() {
+                tracing::error!(
+                    target: "prysm_processor",
+                    "Empty frames, shown as black: {} {}x{}",
+                    layout.format,
+                    layout.width,
+                    layout.height
+                );
+            }
+        }
+
+        let mut edge_colors = if layout.is_sampled() {
+            self.sample(frame, now, &mut mark)
+        } else {
+            EdgeColors::black(
+                layout.width,
+                layout.height,
+                self.pipeline.config.sample_density,
+            )
+        };
+
+        self.adjust_output(&mut edge_colors, mark);
+        edge_colors
+    }
+
+    /// The stages before the output: black bars, sampling and smoothing.
+    fn sample(&mut self, frame: Frame, now: Instant, mut mark: impl FnMut(Stage)) -> EdgeColors {
+        let pipeline = &mut self.pipeline;
+        let mut view = FrameView::new(frame);
+        if let Some(detector) = &mut pipeline.detector {
+            view = detector.process(view, now);
+            mark(Stage::BlackBars);
+        }
+        self.last_viewport = Some(view.viewport);
+        let mut edge_colors =
+            pipeline
+                .sampler
+                .process_with(&view, &pipeline.config, &self.workers, &mut mark);
+        if let Some(smoother) = &mut pipeline.smoother {
+            edge_colors = smoother.process(edge_colors, now);
+            mark(Stage::Smoothing);
+        }
+        edge_colors
     }
 
     /// Forgets black-bar evidence and temporal history, for a new frame
     /// layout. The sampler's geometry follows the picture size by itself.
-    pub(crate) fn reset(&mut self) {
-        if let Some(detector) = &mut self.detector {
+    fn reset(&mut self) {
+        if let Some(detector) = &mut self.pipeline.detector {
             *detector = BlackBarDetector::default();
         }
-        if let Some(smoother) = &mut self.smoother {
+        if let Some(smoother) = &mut self.pipeline.smoother {
             smoother.reset();
         }
     }
-}
 
-/// Each light's last steps: colour boost, dark floor, calibration and
-/// brightness. Every step is exact identity at its neutral setting, and the
-/// stage exists only when some step is not neutral.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct OutputStage {
-    boost: SaturationBoostPercent,
-    floor: DarkFloorPercent,
-    correction: ColorCorrection,
-    gain: f32,
-}
-
-impl OutputStage {
-    /// `None` when every step is neutral.
-    fn new(config: &Config) -> Option<Self> {
-        let stage = Self {
-            boost: config.saturation_boost_percent,
-            floor: config.dark_floor_percent,
-            correction: config.correction,
-            gain: config.brightness_percent.as_ratio(),
+    /// Boost chroma, apply the dark floor and calibration, then scale brightness.
+    fn adjust_output(&self, edges: &mut EdgeColors, mut mark: impl FnMut(Stage)) {
+        let Some(gain) = self.pipeline.output_gain else {
+            return;
         };
-        (!stage.boost.is_neutral()
-            || !stage.floor.is_neutral()
-            || !stage.correction.is_identity()
-            || stage.gain < 1.0)
-            .then_some(stage)
+        let config = &self.pipeline.config;
+        for strip in [
+            &mut edges.top,
+            &mut edges.right,
+            &mut edges.bottom,
+            &mut edges.left,
+        ] {
+            strip.map_colors(|color| {
+                let color = color
+                    .boost_saturation(config.saturation_boost_percent)
+                    .with_dark_floor(config.dark_floor_percent);
+                config.correction.apply(color) * gain
+            });
+        }
+        mark(Stage::Output);
     }
+}
 
-    pub(crate) fn apply(&self, color: LinearColor) -> LinearColor {
-        let color = color
-            .boost_saturation(self.boost)
-            .with_dark_floor(self.floor);
-        // The glow is meant as neutral white on the wall, so the calibration
-        // corrects it and brightness scales it like any other colour.
-        self.correction.apply(color) * self.gain
+impl Default for PrysmProcessor {
+    fn default() -> Self {
+        Self::new(&Config::default())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_core::{BrightnessPercent, EdgeColors, SmoothingSeconds};
-    use std::time::Instant;
+    use prysm_core::{
+        BrightnessPercent, ColorCorrection, DarkFloorPercent, SaturationBoostPercent,
+        SmoothingSeconds,
+    };
 
     /// What a node holds, as the table below names it.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,18 +279,18 @@ mod tests {
         })
     }
 
-    /// A pipeline in the given states: a node is taught by one frame.
-    fn pipeline(detector: Node, smoother: Node) -> (Pipeline, Config) {
+    /// A processor in the given states: a node is taught by one frame.
+    fn processor(detector: Node, smoother: Node) -> (PrysmProcessor, Config) {
         let config = config(detector != Node::Off, smoother != Node::Off);
-        let mut pipeline = Pipeline::new(&config);
+        let mut processor = PrysmProcessor::with_threads(&config, NonZeroUsize::MIN);
         let frame = crate::frames::FrameView::new(prysm_core::Frame::dummy(64, 36).unwrap());
-        if let (Node::Learned, Some(node)) = (detector, &mut pipeline.detector) {
+        if let (Node::Learned, Some(node)) = (detector, &mut processor.pipeline.detector) {
             let _ = node.process(frame, Instant::now());
         }
-        if let (Node::Learned, Some(node)) = (smoother, &mut pipeline.smoother) {
+        if let (Node::Learned, Some(node)) = (smoother, &mut processor.pipeline.smoother) {
             let _ = node.process(EdgeColors::default(), Instant::now());
         }
-        (pipeline, config)
+        (processor, config)
     }
 
     #[test]
@@ -177,7 +315,7 @@ mod tests {
             ((Off, Learned), ToggleDetector, (Fresh, Learned)),
         ];
         for ((before_detector, before_smoother), event, expected) in table {
-            let (mut pipeline, mut config) = pipeline(before_detector, before_smoother);
+            let (mut processor, mut config) = processor(before_detector, before_smoother);
             match event {
                 Other => config.brightness_percent = BrightnessPercent(40),
                 ToggleDetector => config.remove_black_bars = !config.remove_black_bars,
@@ -188,11 +326,12 @@ mod tests {
                 Reset => {}
             }
             match event {
-                Reset => pipeline.reset(),
-                _ => pipeline.configure(&config),
+                Reset => processor.reset(),
+                _ => processor.configure(&config),
             }
+            let pipeline = &processor.pipeline;
             assert_eq!(
-                (detector(&pipeline), smoother(&pipeline, &config)),
+                (detector(pipeline), smoother(pipeline, &config)),
                 expected,
                 "{before_detector:?}, {before_smoother:?} after {event:?}"
             );
@@ -201,13 +340,15 @@ mod tests {
 
     #[test]
     fn the_output_stage_exists_only_when_a_step_is_not_neutral() {
-        assert!(OutputStage::new(&Config::default()).is_none());
+        let mut processor = PrysmProcessor::with_threads(&Config::default(), NonZeroUsize::MIN);
+        assert!(processor.pipeline.output_gain.is_none());
         for brightness in [100, 101, 255] {
             let config = Config {
                 brightness_percent: BrightnessPercent(brightness),
                 ..Config::default()
             };
-            assert!(OutputStage::new(&config).is_none(), "{brightness}");
+            processor.configure(&config);
+            assert!(processor.pipeline.output_gain.is_none(), "{brightness}");
         }
         for config in [
             Config {
@@ -227,7 +368,8 @@ mod tests {
                 ..Config::default()
             },
         ] {
-            assert!(OutputStage::new(&config).is_some(), "{config:?}");
+            processor.configure(&config);
+            assert!(processor.pipeline.output_gain.is_some(), "{config:?}");
         }
     }
 }

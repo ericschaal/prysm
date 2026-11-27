@@ -1,34 +1,19 @@
 //! Layouts from tv-native-apis (see LICENSE.tv-native-apis).
 use std::ffi::{c_char, c_int, c_void};
 
-#[repr(C)]
-#[derive(Default)]
-pub struct Properties {
-    pub dump: i32,
-    pub x: i16,
-    pub y: i16,
-    pub width: i16,
-    pub height: i16,
-    pub buffers: i32,
-    pub fps: i32,
+#[allow(non_camel_case_types, clippy::undocumented_unsafe_blocks)]
+mod native {
+    include!("generated/vtcapture.rs");
 }
 
-#[repr(C)]
-#[derive(Default)]
-pub struct PlaneInfo {
-    pub stride: i32,
-    pub region: [i16; 4],
-    pub active: [i16; 4],
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub struct BufferInfo {
-    pub y: *mut u8,
-    pub uv: *mut u8,
-    pub y_len: i32,
-    pub uv_len: i32,
-}
+#[cfg(test)]
+pub(super) use native::VT_REGION as Region;
+pub(super) use native::{
+    _LibVtCaptureBufferInfo as BufferInfo, _LibVtCapturePlaneInfo as PlaneInfo,
+    _LibVtCaptureProperties as Properties, VT_RESOLUTION as Resolution, prysm_vt_buffer,
+    prysm_vt_client, prysm_vt_create, prysm_vt_init, prysm_vt_plane, prysm_vt_preprocess,
+    prysm_vt_release,
+};
 
 pub type VtCreate = unsafe extern "C" fn() -> *mut c_void;
 pub type VtInit = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_char) -> c_int;
@@ -37,61 +22,6 @@ pub type VtPlane = unsafe extern "C" fn(*mut c_void, *mut c_char, *mut PlaneInfo
 pub type VtBuffer = unsafe extern "C" fn(*mut c_void, *mut BufferInfo) -> c_int;
 pub type VtClient = unsafe extern "C" fn(*mut c_void, *mut c_char) -> c_int;
 pub type VtRelease = unsafe extern "C" fn(*mut c_void);
-
-// Each bridge writes an exception's message, terminated, into the
-// `error_length` bytes at `error`, and returns -1000 for it.
-unsafe extern "C" {
-    pub fn prysm_vt_create(
-        function: VtCreate,
-        driver: *mut *mut c_void,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-    pub fn prysm_vt_init(
-        function: VtInit,
-        driver: *mut c_void,
-        caller: *const c_char,
-        client: *mut c_char,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-    pub fn prysm_vt_preprocess(
-        function: VtPreprocess,
-        driver: *mut c_void,
-        client: *mut c_char,
-        properties: *mut Properties,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-    pub fn prysm_vt_plane(
-        function: VtPlane,
-        driver: *mut c_void,
-        client: *mut c_char,
-        plane: *mut PlaneInfo,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-    pub fn prysm_vt_buffer(
-        function: VtBuffer,
-        driver: *mut c_void,
-        buffer: *mut BufferInfo,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-    pub fn prysm_vt_client(
-        function: VtClient,
-        driver: *mut c_void,
-        client: *mut c_char,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-    pub fn prysm_vt_release(
-        function: VtRelease,
-        driver: *mut c_void,
-        error: *mut c_char,
-        error_length: usize,
-    ) -> c_int;
-}
 
 #[cfg(test)]
 mod tests {
@@ -111,11 +41,11 @@ mod tests {
     fn layouts_match_the_native_headers() {
         let expected = [
             size_of::<Properties>(),
-            offset_of!(Properties, fps),
+            offset_of!(Properties, frm),
             size_of::<PlaneInfo>(),
-            offset_of!(PlaneInfo, active),
+            offset_of!(PlaneInfo, activeregion),
             size_of::<BufferInfo>(),
-            offset_of!(BufferInfo, y_len),
+            offset_of!(BufferInfo, size0),
         ];
         let mut actual = [0; 6];
         // SAFETY: C++ writes exactly 6 size_t entries into this array.
@@ -135,7 +65,7 @@ mod tests {
         unsafe {
             assert_eq!(
                 prysm_vt_create(
-                    prysm_test_throw_create,
+                    Some(prysm_test_throw_create),
                     &raw mut driver,
                     error.as_mut_ptr(),
                     error.len()
@@ -150,7 +80,7 @@ mod tests {
             );
             assert_eq!(
                 prysm_vt_client(
-                    prysm_test_throw_call,
+                    Some(prysm_test_throw_call),
                     driver,
                     ptr::null_mut(),
                     error.as_mut_ptr(),
@@ -162,11 +92,10 @@ mod tests {
                 CStr::from_ptr(error.as_ptr()).to_str().unwrap(),
                 "native call failed"
             );
-            // A short buffer gets as much of the message as fits, terminated.
             let mut short = [1; 7];
             assert_eq!(
                 prysm_vt_release(
-                    prysm_test_throw_release,
+                    Some(prysm_test_throw_release),
                     driver,
                     short.as_mut_ptr(),
                     short.len()

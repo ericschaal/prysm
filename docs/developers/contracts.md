@@ -5,16 +5,16 @@ are generated from OpenAPI documents the Rust exporter prints.
 
 | Owner | Declares | Frontend import |
 | --- | --- | --- |
-| `prysm-ports` | `Settings`, `Processing`, `Style`, `StyleValues`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file, after its `format` number, which `prysm-settings-file` owns); the built-in styles' values (`Style::built_in`); `StreamEncoding`, the remote source's and the slim TV worker's encodings, the one type here with its own `utoipa::ToSchema` (feature `schema`, enabled by `capture-remote`'s and `webos-service`'s) | — |
+| `prysm-ports` | Settings and their serialized fields, built-in style values, adapter discovery, lighting control, and stream encodings. The settings file format number belongs to `prysm-settings-file`. | — |
 | [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](../../crates/engine/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
 | Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
-| [`prysm-webos-service`](../../crates/hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; its own `Problem` and `Asked`; schema mirrors of `Video`, `Fix`, `LightingTarget`, `OutputIssue`, `SlimLink`, and the ports `StreamEncoding` itself (feature `schema`, which enables `prysm-ports/schema`) | `@prysm/contracts/luna` |
+| [`prysm-webos-service`](../../crates/hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; its own `Problem` and `Asked`; the worker and port wire types derive their schemas when the `schema` feature is enabled | `@prysm/contracts/luna` |
 | [`prysm-export-contracts`](../../crates/tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures; [constants](../../crates/tools/export-contracts/src/constants.rs) the frontends use as they are (the built-in styles' values, the capture kinds' defaults) | Module names, `@prysm/contracts/constants` |
 
-Ports types are the wire types: the portal sends `prysm_ports::Settings` as is.
-`prysm-protocol` describes them with schema-only mirrors, and its tests keep each
-mirror's serde shape equal to the ports type, so ports needs no OpenAPI dependency
-but the optional one of `StreamEncoding`.
+The portal sends `prysm_ports::Settings` directly. Shared wire types such as
+`LightingTarget` export their schemas behind the optional `schema` feature.
+Where the HTTP contract needs a separate representation, protocol tests check
+that it serializes the same way as the ports type.
 
 ## Adapter settings schemas
 

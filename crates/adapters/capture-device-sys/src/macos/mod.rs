@@ -2,6 +2,7 @@
 //! queue, while the calling thread waits for a stop or a failure.
 mod access;
 mod configure;
+mod connection;
 mod delegate;
 mod pixel_buffer;
 
@@ -27,6 +28,8 @@ use crate::{CaptureError, CaptureSink, Result};
 use access::camera_access;
 use configure::{configure_capture, video_settings};
 use delegate::Delegate;
+
+pub(crate) use connection::{check_device, watch_device};
 
 /// Keeps the `AVFoundation` objects alive for as long as frames are flowing.
 struct RunningSession {
@@ -78,7 +81,6 @@ fn start_session(
     })?;
 
     tracing::info!("Opening video device: {}", device.localized_name());
-    // After the lookup, so a missing device never asks for access.
     if !camera_access(sink)? {
         return Ok(None);
     }
@@ -221,8 +223,6 @@ pub(crate) fn run(
         return Ok(());
     }
     sink.ready();
-    // The capture thread itself waits, for a stop, a failure (which wakes
-    // it) or the next stall check; frames arrive on the session's queue.
     while !session.delegate.failed()
         && !sink.should_stop(session.delegate.until_stall(Instant::now()))
     {

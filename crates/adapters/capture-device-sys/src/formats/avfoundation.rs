@@ -39,7 +39,6 @@ impl Rates {
         let low = (min / (1.0 + STRETCH)).ceil().max(1.0);
         let high = (max / (1.0 - STRETCH)).floor().min(f64::from(MAX_FPS));
         if low <= high {
-            // Both are whole numbers from 1 to MAX_FPS here.
             self.0.extend(low as u32..=high as u32);
         }
     }
@@ -69,7 +68,6 @@ mod tests {
 
     #[test]
     fn rates_a_hair_off_a_whole_number_are_that_number() {
-        // A USB card's 100 ns intervals, and broadcast rates.
         for (stated, whole) in [
             (30.000_030_000_03, 30),
             (60.000_240_000_96, 60),

@@ -4,11 +4,9 @@ import type {
   PrimaryControls,
 } from '@prysm/contracts/application';
 
-/**
- * From the generated schemas: `Processing.calibrations` `maxItems`
- * (`MAX_CALIBRATIONS`) and `Calibration.name` `maxLength` (characters).
- */
-export const calibrationLimits = { count: 32, name: 64 } as const;
+import { calibrationLimits } from '@prysm/contracts/constants';
+
+export { calibrationLimits };
 
 const control = { min: -100, max: 100, step: 1 } as const;
 /** Each white control, from the generated `CorrectionControls` schema. */

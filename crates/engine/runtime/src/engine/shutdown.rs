@@ -1,7 +1,6 @@
 //! The shutdown sequence, and the blocking calls it may abandon.
-use super::lighting::Lighting;
 use super::{Command, Core, Engine};
-use prysm_ports::{Error, Escalation, IdleMode, Result};
+use prysm_ports::{Error, Result};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
@@ -97,80 +96,8 @@ impl Core {
     }
 
     pub(super) async fn shutdown(&mut self) -> Result<()> {
-        self.settle().await;
-        // Calibration ends at shutdown even on a faulted engine: the last
-        // snapshot shows no pattern that nothing is showing any more.
         self.calibrate(None);
-        if let Lighting::Faulted(phase) = self.lighting {
-            return Err(Error::Faulted(phase));
-        }
-        let stopped = match self.lighting {
-            // One last try, waiting for nothing.
-            Lighting::Unanswered { mode, .. } => {
-                let tried = self.idle(mode).await;
-                self.set_lighting(Lighting::left_by_idle(mode, &tried));
-                tried
-            }
-            _ => self.stop(IdleMode::Off).await,
-        };
-        // Lights that do not answer are away, which fails no shutdown.
-        let stopped = stopped.or_else(|error| {
-            if error.escalation() != Escalation::Unanswered {
-                return Err(error);
-            }
-            tracing::warn!(
-                error = %prysm_ports::chain(&error),
-                "the lights did not answer the last request; they may be left as they were"
-            );
-            Ok(())
-        });
-        let result = stopped.and(self.abandoned.take().map_or(Ok(()), Err));
-        self.record(&result);
-        result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fakes::{
-        CallLog, FakeIdle, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources,
-        MemoryStore,
-    };
-    use crate::leds::UNANSWERED_INTERVAL;
-    use prysm_ports::{AdapterSettings, LightingTarget, Registry, Settings};
-    use std::time::Duration;
-
-    /// A try due after shutdown began is the shutdown's last one, made once
-    /// by it: the loop's timer was set before. Under the paused clock.
-    #[tokio::test(start_paused = true)]
-    async fn a_try_due_once_shutdown_began_is_the_shutdowns() {
-        let log = CallLog::new();
-        let output = FakeOutputSettings {
-            name: "o".into(),
-            idle: FakeIdle::UnansweredUntil("never".into()),
-            ..Default::default()
-        };
-        let settings = Settings {
-            capture: Some(AdapterSettings::new("fake", &FakeSourceSettings::default())),
-            output: Some(AdapterSettings::new("fake", &output)),
-            ..Settings::default()
-        };
-        let mut registry = Registry::default();
-        registry.add_source(FakeSources(log.clone()));
-        registry.add_output(FakeOutputs(log.clone()));
-        let store = Box::new(MemoryStore::with(settings));
-        let (handle, engine) = Engine::start(registry, store, Duration::from_secs(2))
-            .await
-            .unwrap();
-        let engine = engine.shutdown_grace(UNANSWERED_INTERVAL * 10);
-        handle.set_target(LightingTarget::Effects).await.unwrap();
-        engine.begin_shutdown();
-        tokio::time::advance(UNANSWERED_INTERVAL).await;
-        // A round trip through the loop after what was due.
-        assert!(handle.set_calibration(None).await.is_err());
-        assert_eq!(log.count("output.idle:o:Native"), 1, "left to the shutdown");
-        engine.shutdown().await.unwrap();
-        assert_eq!(log.count("output.idle:o:Native"), 2, "its one last try");
+        let stopped = self.shutdown_lighting().await;
+        stopped.and(self.abandoned.take().map_or(Ok(()), Err))
     }
 }

@@ -142,8 +142,7 @@ fn run(flavor: Flavor, action: Action, tail: &Tail) -> Result<(), String> {
     }
 }
 
-/// A sandbox is a private `prysm-supervisor.*` directory under the
-/// temporary directory, so a probe can never touch installed files.
+/// Require a private (0700) `prysm-supervisor.*` root under the temporary directory.
 fn sandbox_root(root: &Path) -> Result<PathBuf, String> {
     let root = root
         .canonicalize()

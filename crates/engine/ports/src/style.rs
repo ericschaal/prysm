@@ -5,12 +5,9 @@ use crate::ValidationError;
 use prysm_core::DarkFloorPercent;
 use serde::{Deserialize, Serialize};
 
-/// A style by name. [`Processing::style`](crate::Processing::style) stores it
-/// as an object, `{ "kind": "natural" }`; on its own it is written as its
-/// name, as a key of the published table of built-in styles.
-///
-/// Built-in and custom are one enum because they are one flat `kind` on the
-/// wire; [`Style::built_in`] has no values for Custom.
+/// A style by name: a built-in set of the picture-taste knobs, or `custom`,
+/// the user's own values.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Style {
@@ -31,9 +28,7 @@ impl Style {
     /// The built-in styles, in the order they are offered.
     pub const BUILT_IN: [Self; 4] = [Self::Natural, Self::Calm, Self::Vivid, Self::Game];
 
-    /// The built-in styles' values, the one table of them; `None` for
-    /// [`Style::Custom`], whose values are the user's. First guesses, not yet
-    /// tuned on a TV.
+    /// Built-in style values, or `None` for [`Style::Custom`].
     #[must_use]
     pub const fn built_in(self) -> Option<StyleValues> {
         let values = match self {
@@ -46,7 +41,6 @@ impl Style {
                 saturation_boost_percent: 0,
                 dark_floor_percent: 0,
             },
-            // Cuts are eased in and brightness is ramped: nothing abrupt.
             Self::Calm => StyleValues {
                 smoothing_seconds: 0.8,
                 cut_response_percent: 0,
@@ -84,6 +78,7 @@ impl Style {
 /// `{ "kind": "natural" }`, an object so that a later kind with fields (a
 /// saved style by `id`) is additive. A serde `tag` would not refuse unknown
 /// fields beside the kind.
+/// Processing stores the style as `{ "kind": "natural" }`. On its own a style serializes as its name.
 pub(crate) mod as_object {
     use super::Style;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

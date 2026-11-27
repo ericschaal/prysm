@@ -30,10 +30,8 @@ export function useDraft<T>({
   const dirty = !same(draft, base ?? fresh());
   const syncing = awaiting !== null && revision < awaiting;
 
-  function load(value: T | null, remount = false) {
-    const next = value ?? fresh();
-    setBase(value);
-    // Remounting inputs drops focus; only do it when what they show changes.
+  function load(next: T, remount = false) {
+    setBase(saved);
     if (remount || !same(next, draft)) {
       setDraftValue(next);
       setGeneration((count) => count + 1);
@@ -44,7 +42,7 @@ export function useDraft<T>({
     // Our save arrived (revisions restart randomly with the process, so the
     // section itself also ends the wait).
     if (syncing && same(saved, base)) setAwaiting(null);
-    else if (!dirty && !syncing) load(saved);
+    else if (!dirty && !syncing) load(saved ?? fresh());
   }
   return {
     base,
@@ -56,15 +54,9 @@ export function useDraft<T>({
     unconfigured: base === null,
     setDraft: setDraftValue,
     /** Discard the draft and show the saved section. */
-    reload: () => load(saved, true),
+    reload: () => load(saved ?? fresh(), true),
     /** Start again from the saved section, with `next` as the edit on top. */
-    rebase: (next: T) => {
-      setBase(saved);
-      if (!same(next, draft)) {
-        setDraftValue(next);
-        setGeneration((count) => count + 1);
-      }
-    },
+    rebase: (next: T) => load(next),
     /** `value` was saved as `revision`. */
     saved: (value: T, savedRevision: number) => {
       setBase(value);

@@ -25,7 +25,9 @@ async fn light_until_ended(handle: &EngineHandle) {
     handle.set_target(LightingTarget::ScreenSync).await.unwrap();
     handle
         .snapshot()
-        .wait_for(|s| matches!(s.session, SessionState::Stopped { .. }))
+        .wait_for(|s| {
+            s.target == LightingTarget::Off && matches!(s.session, SessionState::Stopped { .. })
+        })
         .await
         .unwrap();
 }
@@ -49,7 +51,6 @@ async fn counters_total_frames_and_opens_across_sessions() {
         assert_eq!((first.source_opens, first.output_opens), (1, 1));
         assert_eq!(first.output_write_failures, 0);
 
-        // A second session reopens both and keeps counting from the totals.
         light_until_ended(&handle).await;
         let second = handle.stats();
         assert_eq!((second.frames_received, second.frames_sent), (40, 40));

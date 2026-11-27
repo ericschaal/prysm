@@ -7,7 +7,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::mem;
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
@@ -113,27 +113,12 @@ impl Launcher for ProcessLauncher {
             kill_and_reap(&mut child, "the worker");
             return Err(io::Error::other("worker pipes missing"));
         };
-        let events = Outputs {
-            sender: sender.clone(),
-            waker: self.waker.clone(),
-        };
-        let logs = Outputs {
+        let events = WakeSender {
             sender,
             waker: self.waker.clone(),
         };
-        let ended = Arc::new(AtomicBool::new(false));
-        let reader = std::thread::Builder::new()
-            .name("prysm-worker-events".into())
-            .spawn({
-                let ended = ended.clone();
-                move || {
-                    read_events(stdout, &events);
-                    // Said before the wake, so the poll it brings sees it:
-                    // its end lets a held-back exit through.
-                    ended.store(true, Ordering::Release);
-                    events.waker.wake();
-                }
-            });
+        let logs = events.clone();
+        let reader = EventReader::spawn(stdout, events);
         let logger = std::thread::Builder::new()
             .name("prysm-worker-log".into())
             .spawn(move || read_log(stderr, |line| logs.send(Output::Log(line))));
@@ -147,17 +132,14 @@ impl Launcher for ProcessLauncher {
         Ok(ProcessWorker {
             outputs,
             wait_failed: false,
-            reaped: Reaped {
+            reaped: WakeSender {
                 sender: self.reaps.clone(),
                 waker: self.waker.clone(),
             },
             stage: Stage::Running {
                 child,
                 stdin,
-                reader: EventReader {
-                    thread: reader,
-                    ended,
-                },
+                reader,
             },
         })
     }
@@ -167,10 +149,7 @@ impl Launcher for ProcessLauncher {
     }
 }
 
-/// Kill and reap a child that is given up on, such as a worker that could
-/// not be set up (its pipes are not read yet, so it cannot block on them).
-/// Not reaped yet, so the kill reaches it. A failed kill or reap is
-/// reported; the caller's error stands.
+/// Attempts to kill and reap a child after setup failed. Logs either error.
 pub(crate) fn kill_and_reap(child: &mut Child, what: &str) {
     if let Err(error) = child.kill() {
         warn!(child = what, %error, "cannot kill");
@@ -180,22 +159,23 @@ pub(crate) fn kill_and_reap(child: &mut Child, what: &str) {
     }
 }
 
-/// Where a reader thread puts what it read: the channel, then a wake.
-struct Outputs {
-    sender: mpsc::Sender<Output>,
+/// Queues a notification before waking the supervisor's event loop.
+#[derive(Debug, Clone)]
+struct WakeSender<T> {
+    sender: mpsc::Sender<T>,
     waker: Waker,
 }
 
-impl Outputs {
+impl<T> WakeSender<T> {
     /// `false` once nobody reads the channel.
-    fn send(&self, output: Output) -> bool {
-        let sent = self.sender.send(output).is_ok();
+    fn send(&self, value: T) -> bool {
+        let sent = self.sender.send(value).is_ok();
         self.waker.wake();
         sent
     }
 }
 
-fn read_events(stdout: impl Read, outputs: &Outputs) {
+fn read_events(stdout: impl Read, outputs: &WakeSender<Output>) {
     let mut reader = LineReader::new(BufReader::new(stdout));
     loop {
         let output = match reader.read::<Event>() {
@@ -249,14 +229,7 @@ pub struct ProcessWorker {
     stage: Stage,
     /// `waitpid` failed (with ECHILD, the process is already gone).
     wait_failed: bool,
-    reaped: Reaped,
-}
-
-/// Where a worker let go says that its late reap returned.
-#[derive(Debug)]
-struct Reaped {
-    sender: mpsc::Sender<()>,
-    waker: Waker,
+    reaped: WakeSender<()>,
 }
 
 /// Where the worker process is between its spawn and its reported exit.
@@ -288,15 +261,26 @@ struct EventReader {
 }
 
 impl EventReader {
+    fn spawn(stdout: ChildStdout, events: WakeSender<Output>) -> io::Result<Self> {
+        let ended = Arc::new(AtomicBool::new(false));
+        let completion = ended.clone();
+        let thread = std::thread::Builder::new()
+            .name("prysm-worker-events".into())
+            .spawn(move || {
+                read_events(stdout, &events);
+                completion.store(true, Ordering::Release);
+                events.waker.wake();
+            })?;
+        Ok(Self { thread, ended })
+    }
+
     fn ended(&self) -> bool {
         self.ended.load(Ordering::Acquire)
     }
 }
 
 impl ProcessWorker {
-    /// Signal the process while it is not reaped; afterwards its pid may be
-    /// someone else's. Also once waiting for it failed: it may have been
-    /// reaped already.
+    /// Does nothing after reap. A failed wait prevents further signals to the PID.
     fn signal(&self, signal: nix::sys::signal::Signal) -> io::Result<()> {
         let Stage::Running { child, .. } = &self.stage else {
             return Ok(());
@@ -378,30 +362,21 @@ impl Worker for ProcessWorker {
 }
 
 impl Drop for ProcessWorker {
-    /// Abnormal teardown only (the machine reaps before letting go): SIGTERM,
-    /// so the worker still runs its stop and releases the capture tap (a killed
-    /// worker was once seen to leave the TV's capture locked until a reboot;
-    /// later kills did not reproduce it), and reap on a thread, so a process stuck in the kernel cannot
-    /// block us. A worker that does not finish is bounded by its own stop
-    /// deadline (see `prysm_webos_link::worker::guard_parent`). When the
-    /// reap returns, the launcher is told ([`Launcher::let_go_reaped`]).
+    /// Requests termination and reaps a running child off the event-loop thread.
     fn drop(&mut self) {
-        // Already exited if this fails; the reap below collects it.
         let _ = self.terminate();
         if let Stage::Running { mut child, .. } = mem::replace(&mut self.stage, Stage::Reported) {
-            let Reaped { sender, waker } = &self.reaped;
-            let (sender, waker) = (sender.clone(), waker.clone());
+            let reaped = self.reaped.clone();
             let reaper = std::thread::Builder::new()
                 .name("prysm-worker-reaper".into())
                 .spawn(move || {
-                    // An error (such as ECHILD) means there is no process
-                    // to wait for: gone either way.
-                    if let Err(error) = child.wait() {
-                        warn!(%error, "cannot reap the worker");
+                    if let Err(error) = child.wait()
+                        && error.raw_os_error() != Some(nix::libc::ECHILD)
+                    {
+                        warn!(%error, "cannot confirm the worker was reaped");
+                        return;
                     }
-                    // Nobody listens once the service ended.
-                    let _ = sender.send(());
-                    waker.wake();
+                    reaped.send(());
                 });
             if let Err(error) = reaper {
                 warn!(%error, "cannot start the worker reaper");

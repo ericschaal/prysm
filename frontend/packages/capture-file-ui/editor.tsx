@@ -7,7 +7,6 @@ import {
   type EditorProps,
 } from '@prysm/web-portal';
 
-/** Every file gets the same answer: FFmpeg scales it. */
 const fileQuery = { kind: 'file', path: '' } as const;
 
 export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {

@@ -72,7 +72,7 @@ export type ServiceAction =
   | { type: 'problem'; text: string };
 
 /** The last state received, whatever the subscription does now. */
-const lastState = (link: Link) =>
+export const lastState = (link: Link) =>
   link.status === 'connecting' ? null : link.state;
 
 /**
@@ -133,16 +133,12 @@ export function serviceReducer(
     case 'saved': {
       // The subscription may already show what was saved.
       const state = lastState(current.link);
-      const shown =
-        state && same(completePreferences(state.preferences), action.stored);
+      const before = state && completePreferences(state.preferences);
       return {
         ...current,
-        pending: shown
+        pending: same(before, action.stored)
           ? null
-          : {
-              stored: action.stored,
-              before: state && completePreferences(state.preferences),
-            },
+          : { stored: action.stored, before },
       };
     }
     case 'changing':
@@ -174,8 +170,6 @@ export function useTvService(service: TvService, active: boolean) {
   const [generation, setGeneration] = useState(0);
   /** The end of the queue of commands; it never rejects. */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  /** Commands asked for and not finished. */
-  const queued = useRef(0);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -222,9 +216,8 @@ export function useTvService(service: TvService, active: boolean) {
     failed: string,
     begun?: string,
   ): Promise<boolean> {
-    queued.current += 1;
     dispatch({ type: 'changing', value: true });
-    const result = queue.current.then(async () => {
+    const result: Promise<boolean> = queue.current.then(async () => {
       try {
         // The app closed meanwhile: nothing more is sent.
         if (!mounted.current) return false;
@@ -239,8 +232,7 @@ export function useTvService(service: TvService, active: boolean) {
         }
         return false;
       } finally {
-        queued.current -= 1;
-        if (mounted.current && queued.current === 0)
+        if (mounted.current && queue.current === result)
           dispatch({ type: 'changing', value: false });
       }
     });
@@ -249,11 +241,6 @@ export function useTvService(service: TvService, active: boolean) {
   }
 
   /**
-   * The reply is the state the service stored, and it publishes that state
-   * next, so the first push that differs from what was shown ends what is
-   * pending: no wait needs a bound.
-   */
-  /**
    * Answer what the service asks with the intent it keeps: slim, capture
    * on; full, the target again (off first while the worker runs, so it is
    * applied anew). Nothing is sent when nothing is asked, or for a target
@@ -261,7 +248,6 @@ export function useTvService(service: TvService, active: boolean) {
    */
   async function answer() {
     const now = latest.current;
-    // A state kept while the service is missing asks nothing of this one.
     if (now.status !== 'live' && now.status !== 'lost') return;
     const asked = now.state;
     if (!problemOf(asked)) return;
@@ -298,7 +284,7 @@ export function useTvService(service: TvService, active: boolean) {
     /** Full package: what the service asks, tried again ({@link answer}). */
     retry: () => run(answer, '', 'Couldn’t start.'),
     /** Full package: a lighting mode, where it goes to the service (see `modeRoute`). */
-    choose: (target: LightingTarget) =>
+    choose: (target: LightingTarget | 'remembered') =>
       run(
         () => service.setTarget(target),
         '',
@@ -309,7 +295,6 @@ export function useTvService(service: TvService, active: boolean) {
         async () => {
           await service.setup();
           setGeneration((count) => count + 1);
-          // A set-up service keeps asking until it is answered.
           await answer();
         },
         'Service setup complete.',
@@ -320,7 +305,6 @@ export function useTvService(service: TvService, active: boolean) {
       run(
         async () => {
           await service.uninstall();
-          // Said at once, whatever the subscription reports on its way out.
           if (mounted.current) dispatch({ type: 'removed' });
         },
         'Service setup removed. Your settings are kept.',

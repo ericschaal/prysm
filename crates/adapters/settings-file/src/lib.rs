@@ -30,44 +30,27 @@ const FORMAT_FIELD: &str = "format";
 const MAX_BYTES: u64 = 1024 * 1024;
 
 /// A settings file whose `format` this Prysm does not read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
     /// No `format` field: written by hand or by a Prysm before 1.0.
+    #[error(
+        "it has no `{FORMAT_FIELD}` field: add `\"{FORMAT_FIELD}\": {FORMAT}` \
+         once its fields match this Prysm's settings"
+    )]
     Missing,
     /// `format` is not a whole number of zero or more (`null`, `"1"`, `2.0`,
     /// `-1`); `found` is its JSON.
+    #[error(
+        "its `{FORMAT_FIELD}` is {found}, not a format number; this Prysm reads format {FORMAT}"
+    )]
     NotANumber { found: String },
     /// Written by a newer Prysm: a whole number above [`FORMAT`], of any size.
+    #[error("it is format {found}, written by a newer Prysm; this Prysm reads format {FORMAT}")]
     Newer { found: Number },
     /// A format this Prysm does not read: 0, or one it replaced.
+    #[error("it is format {found}; this Prysm reads format {FORMAT}")]
     Older { found: Number },
 }
-
-impl fmt::Display for FormatError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Missing => write!(
-                f,
-                "it has no `{FORMAT_FIELD}` field: add `\"{FORMAT_FIELD}\": {FORMAT}` \
-                 once its fields match this Prysm's settings"
-            ),
-            Self::NotANumber { found } => write!(
-                f,
-                "its `{FORMAT_FIELD}` is {found}, not a format number; \
-                 this Prysm reads format {FORMAT}"
-            ),
-            Self::Newer { found } => write!(
-                f,
-                "it is format {found}, written by a newer Prysm; this Prysm reads format {FORMAT}"
-            ),
-            Self::Older { found } => {
-                write!(f, "it is format {found}; this Prysm reads format {FORMAT}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for FormatError {}
 
 /// Checks the `format` of a file's object before its settings are read, so
 /// that a newer file is refused for its format rather than for a field it
@@ -360,6 +343,26 @@ pub struct NotSetAside {
 }
 
 impl SettingsStore for SettingsFile {
+    fn load_mode(&mut self) -> Result<Option<prysm_ports::LightingMode>> {
+        let path = self.path.with_added_extension("mode");
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(Error::adapter(format!("open {}", path.display()), error)),
+        };
+        serde_json::from_reader(io::BufReader::new(file))
+            .map(Some)
+            .map_err(|error| Error::adapter(format!("read {}", path.display()), error))
+    }
+
+    fn save_mode(&mut self, mode: prysm_ports::LightingMode) -> Result<()> {
+        let path = self.path.with_added_extension("mode");
+        let bytes = serde_json::to_vec(&mode)
+            .map_err(|error| Error::adapter("encode remembered mode", error))?;
+        atomic::write(&path, &bytes, None, true)
+            .map_err(|error| Error::adapter(format!("save {}", path.display()), error))
+    }
+
     fn load(&mut self) -> Result<Option<Settings>> {
         let loaded = self.read();
         self.unread = loaded.is_err();

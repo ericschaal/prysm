@@ -162,7 +162,6 @@ impl UiTap for HalTap {
     }
 
     fn release(self: Box<Self>) -> Result<()> {
-        // Logged before as well: a release that hangs never logs after.
         tracing::info!(thread = os_thread(), "releasing the TV UI tap");
         self.capture
             .release()
@@ -196,7 +195,6 @@ impl Tap for LgTap {
             Ok(sys::Acquired::Refused) => return Ok(Acquired::Refused),
             Err(error) => return Err(fault("webOS video interrupted", error)),
         };
-        // An unfinished frame publishes nothing and goes back to the pool.
         let mut frame = self
             .pool
             .acquire(video.width, video.height, TAP_FORMAT)

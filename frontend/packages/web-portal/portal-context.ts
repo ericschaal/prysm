@@ -1,5 +1,8 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
-import type { Processing } from '@prysm/contracts/application';
+import type {
+  CaptureSettings,
+  OutputSettings,
+} from '@prysm/contracts/application';
 import type {
   ApplicationSnapshot,
   CaptureModesClient,
@@ -26,7 +29,9 @@ export interface WebPortalProps<
   C extends AdapterSection,
   O extends AdapterSection,
 > {
-  application: ApplicationRuntime<C, O>;
+  application:
+    | ApplicationRuntime<C, O>
+    | ApplicationRuntime<CaptureSettings, OutputSettings>;
   /** The capture kinds this host registers, in display order. */
   captures: AdapterUis<NoInfer<C>>;
   /** The output kinds this host registers, in display order. */
@@ -101,14 +106,11 @@ export interface Portal {
   snapshot: ApplicationSnapshot<Section, Section>;
   online: boolean;
   commands: ApplicationRuntime<Section, Section>['commands'];
-  dispatch: ApplicationRuntime<Section, Section>['store']['dispatch'];
   /** What the lights are doing, decided once for every page. */
   lighting: LightingSituation;
   path: PathState;
   /** The live problem of one side, in plain words; `null` while it works. */
   problemAt: (section: AdapterSide) => string | null;
-  saveProcessing: (expected: number, processing: Processing) => Promise<number>;
-  tryProcessing: (processing: Processing) => Promise<unknown>;
   /** How setup ended, shown on Home and Settings until setup opens again. */
   setupNotice: string;
   /** Where the setup notice shows, focused by the frame when it appears. */

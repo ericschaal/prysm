@@ -20,13 +20,18 @@ pub enum PreviewEvent {
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct PreviewFrame {
     /// Increases with every new frame, across sessions; equal means unchanged.
+    #[cfg_attr(feature = "schema", schema(maximum = 9_007_199_254_740_991_u64))]
     pub sequence: u64,
     /// The captured frame's size in pixels; `viewport` is in these pixels.
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub source_width: u32,
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub source_height: u32,
     /// The JPEG's size in pixels: the source scaled to at most 480 on its
     /// longer side, keeping its aspect ratio.
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub width: u32,
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub height: u32,
     /// The part of the frame that was sampled, after black-bar removal.
     pub viewport: PreviewViewport,
@@ -38,9 +43,13 @@ pub struct PreviewFrame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct PreviewViewport {
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub x: u32,
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub y: u32,
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub width: u32,
+    #[cfg_attr(feature = "schema", schema(maximum = 4_294_967_295_u64))]
     pub height: u32,
 }
 

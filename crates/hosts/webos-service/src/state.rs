@@ -1,6 +1,6 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{Fix, FullStatus, LightingTarget, OutputIssue, SlimLink, SlimStatus, Video};
+use prysm_webos_link::{Fix, LightingTarget, OutputIssue, SlimLink, Video};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to. Published as [`Package`]'s tag.
@@ -56,7 +56,6 @@ pub struct State {
     pub package: Package,
     pub preferences: Preferences,
     pub power: Power,
-    #[cfg_attr(feature = "schema", schema(value_type = crate::schema::VideoSchema))]
     pub video: Video,
     /// Why the saved preferences could not be read: the service runs with
     /// the defaults and keeps the file as it is until the app saves
@@ -78,10 +77,6 @@ pub enum Package {
     /// `prysm-webos`: capture, processing, WLED and the portal on the TV.
     Full {
         /// The engine's target, including changes made in the portal.
-        #[cfg_attr(
-            feature = "schema",
-            schema(value_type = crate::schema::LightingTargetSchema)
-        )]
         target: LightingTarget,
         worker: FullWorker,
     },
@@ -143,7 +138,6 @@ pub enum Asked {
     /// The lights do not answer, and Prysm stopped trying.
     Unanswered,
     /// The person must act, by this step.
-    #[cfg_attr(feature = "schema", schema(value_type = crate::schema::FixSchema))]
     Ask(Fix),
 }
 
@@ -169,7 +163,7 @@ pub enum FullWorker {
         /// Frames per second over about the last second, rounded, while
         /// screen sync runs; 0 while it waits for frames.
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        #[cfg_attr(feature = "schema", schema(nullable = false, maximum = 65_535))]
         fps: Option<u16>,
         /// Why the lights do not show what was chosen, as the worker last
         /// reported it: with screen sync any issue, `unreachable` also while
@@ -220,7 +214,6 @@ pub enum SlimWorker {
         capturing: bool,
         /// Where the uplink to the receiver stands, as the worker last
         /// reported it; it says the worker's own waits and failures.
-        #[cfg_attr(feature = "schema", schema(value_type = crate::schema::SlimLinkSchema))]
         link: SlimLink,
     },
     Stopping {
@@ -238,108 +231,9 @@ pub enum SlimWorker {
     },
 }
 
-/// Where the worker process is, the same for both packages, with what the
-/// person is asked there; each package's worker type adds what its reports
-/// say in that phase.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Process {
-    Stopped,
-    /// What the running worker asks; only a full worker's is published (a
-    /// slim worker's link says its own).
-    Running(Option<Problem>),
-    /// The full worker's portal address while it answers, and what the
-    /// person is asked once it exited.
-    Stopping {
-        portal: Option<String>,
-        problem: Option<Problem>,
-    },
-    Asking(Problem),
-}
-
-impl FullWorker {
-    /// `process` with the running worker's last `report` (none before its
-    /// first). Only a running worker's capture counts: one being stopped is
-    /// not capturing for the app.
-    #[must_use]
-    pub(crate) fn new(process: Process, report: Option<&FullStatus>) -> Self {
-        match process {
-            Process::Stopped => Self::Stopped,
-            Process::Running(problem) => Self::Running {
-                capturing: report.is_some_and(|report| report.capturing),
-                fps: report.and_then(|report| report.fps),
-                lights: report.and_then(|report| report.lights),
-                portal: report.and_then(|report| report.portal.clone()),
-                problem,
-            },
-            Process::Stopping { portal, problem } => Self::Stopping { portal, problem },
-            Process::Asking(problem) => Self::Asking { problem },
-        }
-    }
-}
-
-impl SlimWorker {
-    /// `process` with the running worker's last `report` (none before its
-    /// first). Only a running worker's stream counts.
-    #[must_use]
-    pub(crate) fn new(process: Process, report: Option<&SlimStatus>) -> Self {
-        match process {
-            Process::Stopped => Self::Stopped,
-            Process::Running(_) => {
-                let SlimStatus { capturing, link } = report.cloned().unwrap_or_default();
-                Self::Running { capturing, link }
-            }
-            Process::Stopping { problem, .. } => Self::Stopping { problem },
-            Process::Asking(problem) => Self::Asking { problem },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Only a running worker says the lights' issue its last report gave.
-    #[test]
-    fn a_running_full_worker_says_the_lights_issue() {
-        let report = FullStatus {
-            capturing: true,
-            fps: Some(30),
-            target: LightingTarget::ScreenSync,
-            lights: Some(OutputIssue::Unreachable),
-            applied: 0,
-            portal: None,
-            failure: None,
-        };
-        assert_eq!(
-            FullWorker::new(Process::Running(None), Some(&report)),
-            FullWorker::Running {
-                capturing: true,
-                fps: Some(30),
-                lights: Some(OutputIssue::Unreachable),
-                portal: None,
-                problem: None,
-            }
-        );
-        let json =
-            serde_json::to_value(FullWorker::new(Process::Running(None), Some(&report))).unwrap();
-        assert_eq!(json["lights"], "unreachable");
-        let stopping = Process::Stopping {
-            portal: None,
-            problem: None,
-        };
-        for process in [Process::Stopped, stopping] {
-            let json =
-                serde_json::to_value(FullWorker::new(process.clone(), Some(&report))).unwrap();
-            assert_eq!(json.get("lights"), None, "{process:?}");
-        }
-        let fine = FullStatus {
-            lights: None,
-            ..report
-        };
-        let json =
-            serde_json::to_value(FullWorker::new(Process::Running(None), Some(&fine))).unwrap();
-        assert_eq!(json.get("lights"), None, "absent, never null");
-    }
 
     /// What is asked is tagged by `step`, with the fix only for `ask`, as
     /// the worker link's escalation is.

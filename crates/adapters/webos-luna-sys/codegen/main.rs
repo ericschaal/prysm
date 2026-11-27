@@ -1,5 +1,6 @@
 //! Generate `src/generated/{luna,glib}.rs` from the webOS SDK headers: only the
 //! functions and types the wrapper uses, loaded at run time via `libloading`.
+//! Also generate the VTCapture exception bridge from its C++ definitions and vendor header.
 //!
 //! ```sh
 //! WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
@@ -14,7 +15,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Generate the Luna and GLib bindings from the webOS SDK in WEBOS_SDK.
+/// Generate Luna and GLib bindings from WEBOS_SDK and the VTCapture bindings from source.
 #[derive(Debug, Parser)]
 struct Cli {
     /// Fail when a committed file differs; change nothing
@@ -56,12 +57,13 @@ fn run(check: bool) -> Result<(), String> {
         .map_err(|error| format!("WEBOS_SDK: {error}"))?;
     let sysroot = sdk.join("arm-webos-linux-gnueabi/sysroot");
     let include = sysroot.join("usr/include");
-    let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = manifest.join("src/generated");
     let mut generated = Vec::new();
     for (name, headers, functions, library) in BINDINGS {
         let bindings = headers
             .iter()
-            .fold(bindgen::Builder::default(), |builder, header| {
+            .fold(builder()?, |builder, header| {
                 builder.header(include.join(header).to_string_lossy())
             })
             .clang_args([
@@ -81,24 +83,39 @@ fn run(check: bool) -> Result<(), String> {
             .dynamic_library_name(library)
             .dynamic_link_require_all(true)
             .wrap_unsafe_ops(true)
-            .rust_target(
-                bindgen::RustTarget::stable(85, 0)
-                    .map_err(|error| format!("Rust target: {error}"))?,
-            )
-            .rust_edition(bindgen::RustEdition::Edition2024)
-            .formatter(bindgen::Formatter::Rustfmt)
-            // ARM layout assertions cannot run in the host's stand-in tests.
-            .layout_tests(false)
-            .generate_comments(false)
             .generate()
             .map_err(|error| format!("generate from {}: {error}", headers.join(", ")))?;
         generated.push((output.join(format!("{name}.rs")), bindings.to_string()));
     }
-    // Every header parsed before any committed file changes.
+    let capture = manifest.join("../capture-webos-sys");
+    let bridge = builder()?
+        .header(capture.join("native/vtcapture.cpp").to_string_lossy())
+        .clang_args(["-x", "c++", "-std=c++11"])
+        .allowlist_function("prysm_vt_.*")
+        // The driver is held only by pointer. Its private layout differs on the TV and host.
+        .blocklist_type("VT_DRIVER_T")
+        .raw_line("pub type VT_DRIVER_T = ::std::ffi::c_void;")
+        .derive_default(true)
+        .generate()
+        .map_err(|error| format!("generate VTCapture bridge: {error}"))?;
+    generated.push((
+        capture.join("src/generated/vtcapture.rs"),
+        bridge.to_string(),
+    ));
     for (path, bindings) in generated {
         emit(&path, &bindings, check)?;
     }
     Ok(())
+}
+
+fn builder() -> Result<bindgen::Builder, String> {
+    Ok(bindgen::Builder::default()
+        .rust_target(bindgen::RustTarget::stable(85, 0).map_err(|error| error.to_string())?)
+        .rust_edition(bindgen::RustEdition::Edition2024)
+        .formatter(bindgen::Formatter::Rustfmt)
+        // The host and the 32-bit TV both use the declarations.
+        .layout_tests(false)
+        .generate_comments(false))
 }
 
 fn emit(path: &Path, bindings: &str, check: bool) -> Result<(), String> {

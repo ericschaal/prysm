@@ -6,11 +6,10 @@ import { JSDOM } from 'jsdom';
 import {
   decodeColors,
   decodePreview,
-  decodeState,
+  readState,
   embeddedState,
   httpApplicationClient,
-  httpCaptureModesClient,
-  httpDiscoveryClient,
+  httpPortalClient,
 } from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
 import { fakeApplicationPort } from '../testkit/application';
@@ -141,12 +140,137 @@ const fixtures = JSON.parse(
 
 test('every state, preview and colors event Rust sends decodes as it is', () => {
   for (const [examples, decode] of [
-    [fixtures.State, decodeState],
+    [fixtures.State, readState],
     [fixtures.PreviewEvent, decodePreview],
     [fixtures.ColorsEvent, decodeColors],
   ])
     for (const example of examples)
       assert.deepEqual(decode(example), { event: example });
+});
+
+test('numeric guards keep revisions exact and report values within the wire type', () => {
+  assert.equal(
+    readState(state({ revision: Number.MAX_SAFE_INTEGER + 1 })),
+    'invalid',
+  );
+  assert.equal(readState(state({ device: { led_count: 2 ** 32 } })), 'invalid');
+  assert.equal(
+    readState(state({ input: { fps: Infinity, picture: 'arriving' } })),
+    'invalid',
+  );
+  const preview = fixtures.PreviewEvent.find((event) => event.type === 'frame');
+  assert.equal(decodePreview({ ...preview, sequence: 2 ** 53 }), 'invalid');
+  assert.equal(
+    decodePreview({
+      ...preview,
+      viewport: { ...preview.viewport, x: 2 ** 32 },
+    }),
+    'invalid',
+  );
+  const { settings } = state();
+  assert.equal(
+    readState(
+      state({
+        settings: {
+          ...settings,
+          processing: { ...settings.processing, brightness_percent: 256 },
+        },
+      }),
+    ),
+    'invalid',
+  );
+});
+
+test('a snapshot may omit control, but a supplied control must match the wire contract', () => {
+  const legacy = state({});
+  delete legacy.control;
+  assert.deepEqual(readState(legacy), { event: legacy });
+  const control = { remembered: 'effects', busy: false, external: false };
+  for (const fields of [
+    {},
+    { waiting: 'capture', power: 'off' },
+    { power: 'on', waiting: 'output' },
+  ]) {
+    const snapshot = state({ control: { ...control, ...fields } });
+    assert.deepEqual(readState(snapshot), { event: snapshot });
+  }
+  for (const invalid of [
+    null,
+    [],
+    {},
+    { ...control, remembered: 'off' },
+    { ...control, busy: 0 },
+    { ...control, external: 'yes' },
+    { ...control, waiting: 'other' },
+    { ...control, power: null },
+  ])
+    assert.equal(readState(state({ control: invalid })), 'invalid');
+});
+
+test('the snapshot schema rejects malformed data below the top level', () => {
+  const { settings } = state();
+  for (const malformed of [
+    state({ revision: 0.5 }),
+    state({ device: { brightness_percent: '35' } }),
+    state({ input: { fps: 20 } }),
+    state({ surface_failures: [{ kind: 'internal' }] }),
+    state({ settings: { ...settings, capture: { device: '/dev/video0' } } }),
+    state({
+      settings: {
+        ...settings,
+        processing: { ...settings.processing, style: { kind: 3 } },
+      },
+    }),
+  ])
+    assert.equal(readState(malformed), 'invalid');
+});
+
+test('saved invalid settings and newer report names are available to the UI', () => {
+  const { settings } = state();
+  const snapshot = state({
+    device: { issue: 'sleeping' },
+    input: { fps: 0, picture: 'initializing' },
+    session: {
+      state: 'stopped',
+      failure: {
+        kind: 'invalid',
+        message: 'Wrong value',
+        field: 'processing.brightness_percent',
+      },
+    },
+    settings: {
+      // The runtime retains both unfamiliar kinds and invalid adapter fields.
+      capture: { kind: 'future', custom: 12 },
+      output: { kind: 'wled', address: 42 },
+      processing: { ...settings.processing, brightness_percent: 150 },
+    },
+  });
+  assert.deepEqual(readState(snapshot), { event: snapshot });
+});
+
+test('newer styles, bottlenecks, calibration patterns and surface failures keep their data', () => {
+  const { settings } = state();
+  const snapshot = state({
+    input: { fps: 20, picture: 'arriving', behind: 'capture' },
+    calibration: { pattern: 'new_pattern', uncorrected: false },
+    settings: {
+      ...settings,
+      processing: { ...settings.processing, style: { kind: 'new_style' } },
+    },
+    surface_failures: [{ kind: 'overheated', message: 'Cooling down' }],
+  });
+  assert.deepEqual(readState(snapshot), { event: snapshot });
+  for (const change of [
+    { input: { ...snapshot.input, behind: true } },
+    { calibration: { ...snapshot.calibration, pattern: 1 } },
+    { surface_failures: [{ kind: 'overheated' }] },
+    {
+      surface_failures: [
+        { kind: 'stale_revision', message: 'Missing revision' },
+      ],
+    },
+  ])
+    assert.equal(readState({ ...snapshot, ...change }), 'invalid');
 });
 
 test('the state the portal puts in its page is read as a streamed one; none or an invalid one is no state', () => {
@@ -174,9 +298,8 @@ test('the state the portal puts in its page is read as a streamed one; none or a
 });
 
 test('a target or session state newer than the page is read as unknown, never off or stopped', async () => {
-  // The whole state was refused, so an open page reconnected for ever.
   const newer = state({ target: 'ambient', session: { state: 'dimming' } });
-  assert.deepEqual(decodeState(newer), {
+  assert.deepEqual(readState(newer), {
     event: { ...newer, target: 'unknown', session: { state: 'unknown' } },
   });
   // A newer state's failure and message are kept, to be shown.
@@ -184,7 +307,7 @@ test('a target or session state newer than the page is read as unknown, never of
   const carrying = state({
     session: { state: 'dimming', failure, message: 'm', extra: 1 },
   });
-  assert.deepEqual(decodeState(carrying), {
+  assert.deepEqual(readState(carrying), {
     event: {
       ...carrying,
       session: { state: 'unknown', failure, message: 'm' },
@@ -194,11 +317,8 @@ test('a target or session state newer than the page is read as unknown, never of
   const faulted = state({
     session: { state: 'faulted', message: 'Lighting did not stop in time.' },
   });
-  assert.deepEqual(decodeState(faulted), { event: faulted });
-  assert.equal(
-    decodeState(state({ session: { state: 'faulted' } })),
-    'invalid',
-  );
+  assert.deepEqual(readState(faulted), { event: faulted });
+  assert.equal(readState(state({ session: { state: 'faulted' } })), 'invalid');
   // Each known state keeps only what it carries: screen sync no failure.
   for (const [sent, read] of [
     [
@@ -212,11 +332,11 @@ test('a target or session state newer than the page is read as unknown, never of
     [{ state: 'effects' }, { state: 'effects' }],
     [{ state: 'screen_sync', failure }, { state: 'screen_sync' }],
   ])
-    assert.deepEqual(decodeState(state({ session: sent })), {
+    assert.deepEqual(readState(state({ session: sent })), {
       event: state({ session: read }),
     });
   assert.equal(
-    decodeState(state({ session: { state: 'stopped', failure: 'x' } })),
+    readState(state({ session: { state: 'stopped', failure: 'x' } })),
     'invalid',
   );
   // A known state's failure is whole: `field` and `section` are text.
@@ -226,14 +346,14 @@ test('a target or session state newer than the page is read as unknown, never of
     { kind: 'adapter' },
   ])
     assert.equal(
-      decodeState(state({ session: { state: 'stopped', failure: broken } })),
+      readState(state({ session: { state: 'stopped', failure: broken } })),
       'invalid',
       JSON.stringify(broken),
     );
   // A side this page does not know is absent; a newer kind is said by its
   // side, else as internal.
   const read = (failure) => {
-    const decoded = decodeState(
+    const decoded = readState(
       state({ session: { state: 'stopped', failure } }),
     );
     return decoded.event.session.failure;
@@ -261,11 +381,11 @@ test('a target or session state newer than the page is read as unknown, never of
   );
   // A newer state with a malformed failure keeps the state, not the failure.
   assert.deepEqual(
-    decodeState(state({ session: { state: 'dimming', failure: 'x' } })),
+    readState(state({ session: { state: 'dimming', failure: 'x' } })),
     { event: state({ session: { state: 'unknown' } }) },
   );
-  assert.equal(decodeState(state({ target: 3 })), 'invalid');
-  assert.equal(decodeState(state({ session: 'screen_sync' })), 'invalid');
+  assert.equal(readState(state({ target: 3 })), 'invalid');
+  assert.equal(readState(state({ session: 'screen_sync' })), 'invalid');
   // Events of a newer kind are skipped; a known kind must be whole.
   assert.equal(decodePreview({ type: 'thumbnail' }), 'unknown');
   assert.equal(decodePreview({ type: 'unavailable' }), 'invalid');
@@ -355,6 +475,36 @@ test('a lost reply is unavailable, not a definite rejection', async () => {
   );
 });
 
+test('newer HTTP refusals keep the message and identify a known adapter when possible', async () => {
+  for (const [status, body, expected] of [
+    [
+      422,
+      { kind: 'new_error', message: 'Refused' },
+      { kind: 'bad_request', message: 'Refused' },
+    ],
+    [
+      500,
+      { kind: 'new_error', message: 'Failed' },
+      { kind: 'internal', message: 'Failed' },
+    ],
+    [
+      422,
+      { kind: 'new_error', message: 'Failed', field: 'capture.path' },
+      { kind: 'adapter', section: 'capture', message: 'Failed' },
+    ],
+    [
+      422,
+      { kind: 'adapter', message: 'Failed', section: 'another_side' },
+      { kind: 'adapter', message: 'Failed' },
+    ],
+  ]) {
+    const client = httpApplicationClient({
+      fetch: async () => json(status, body),
+    });
+    await assert.rejects(client.setTarget('off'), { failure: expected });
+  }
+});
+
 test('a base URL targets a remote portal for commands and the stream', async () => {
   const urls = [];
   const client = httpApplicationClient({
@@ -391,7 +541,7 @@ test('candidates are a GET per section and kind, validated', async () => {
     },
   ];
   let reply = json(200, found);
-  const client = httpDiscoveryClient({
+  const client = httpPortalClient({
     baseUrl: 'http://192.0.2.9:8787/',
     fetch: async (url, init) => {
       urls.push(url);
@@ -439,7 +589,7 @@ test('capture modes are posted the capture section and validated', async () => {
     ],
   };
   let reply = json(200, known);
-  const client = httpCaptureModesClient({
+  const client = httpPortalClient({
     baseUrl: 'http://192.0.2.9:8787/',
     fetch: async (url, init) => {
       requests.push([url, init.method, JSON.parse(init.body)]);
@@ -453,6 +603,8 @@ test('capture modes are posted the capture section and validated', async () => {
   ]);
   reply = json(200, { status: 'unknown' });
   assert.deepEqual(await client.modes(capture), { status: 'unknown' });
+  reply = json(200, { status: 'loading', progress: 10 });
+  assert.deepEqual(await client.modes(capture), { status: 'unknown' });
 
   reply = json(422, {
     kind: 'invalid',
@@ -465,7 +617,7 @@ test('capture modes are posted the capture section and validated', async () => {
     return true;
   });
   for (const invalid of [
-    { status: 'maybe' },
+    { status: 3 },
     { status: 'known' },
     { status: 'known', modes: [{ width: { min: 1, max: 1, step: 1 } }] },
   ]) {

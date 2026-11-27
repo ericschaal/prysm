@@ -73,8 +73,6 @@ fn percentile(values: &mut [f32], share: f32) -> f32 {
     values.get(index).copied().unwrap_or_default()
 }
 
-// ── Pictures (640x360 unless stated) ────────────────────────────────────────
-
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 360;
 
@@ -160,26 +158,21 @@ fn accuracy_pictures() -> Vec<(&'static str, FrameView)> {
     ]
 }
 
-// ── The reference: the same formula on every cell ──────────────────────────
-
 /// Each sample's focused colour with every cell at full resolution, from the
 /// sampler's last frame; `plain` holds its plain means in strip order.
 fn reference(sampler: &SpatialSampler, plain: &[LinearColor], strength: f32) -> Vec<LinearColor> {
-    let cells = &sampler.cells;
+    let cells = &sampler.geometry.cells;
     let colors = &sampler.cell_colors;
     let tints: Vec<Tint> = colors.iter().map(|&color| Tint::of(color)).collect();
-    let points = sampler.sample_points.iter().flatten();
-    let rows = sampler
-        .sample_weights
-        .iter()
-        .flat_map(|weights| weights.chunks_exact(cells.len()));
+    let points = sampler.geometry.key.sample_points(sampler.geometry.counts);
+    let rows = sampler.geometry.weights.chunks_exact(cells.len());
     points
         .zip(rows)
         .zip(plain)
-        .map(|((&point, row), &plain)| {
+        .map(|((point, row), &plain)| {
             let mut anchor = WeightedMean::default();
             for ((&cell, &color), tint) in cells.iter().zip(colors).zip(&tints) {
-                let distance_squared = distance_squared(cell, point, sampler.radius);
+                let distance_squared = distance_squared(cell, point, sampler.geometry.radius);
                 let local = cell_area(cell) * local_lobe(distance_squared);
                 anchor.add(color, local * tint.grey_factor);
             }
@@ -198,18 +191,7 @@ fn reference(sampler: &SpatialSampler, plain: &[LinearColor], strength: f32) -> 
 
 fn rebuild(sampler: &mut Configured, sizes: Sizes) {
     let sampler: &mut SpatialSampler = sampler;
-    let key = sampler.built_for.expect("a processed frame");
-    let (width, height) = (key.width, key.height);
-    let geometry = Geometry {
-        width,
-        height,
-        cells: &sampler.cells,
-        columns: sampler.columns,
-        radius: sampler.radius,
-        points: &sampler.sample_points,
-        weights: &sampler.sample_weights,
-    };
-    sampler.focus.build(&geometry, sizes);
+    sampler.focus.build(&sampler.geometry, sizes);
 }
 
 /// Per-LED distance between the two-part evaluation at `sizes` and the
@@ -322,15 +304,13 @@ fn evaluation_sizes_table() {
             let _ = probe.process(&pictures[0].1);
             rebuild(&mut probe, sizes);
             let fields = &probe.focus.fields;
-            let samples: usize = fields.iter().map(|f| f.starts.len() - 1).sum();
-            let near: usize = fields.iter().map(|f| f.near.len()).sum();
+            let samples = fields.starts.len() - 1;
+            let near = fields.near.len();
             let colours = near as f32 / samples as f32 + probe.focus.blocks.len() as f32;
             eprintln!("| {reach} % | {name} | {colours:.0} | {worst_p95:.2} | {worst_max:.2} |");
         }
     }
 }
-
-// ── Behaviour ───────────────────────────────────────────────────────────────
 
 /// Small pictures for the property tests, cheap in a debug build.
 fn varied_pictures(width: u32, height: u32) -> Vec<FrameView> {
@@ -382,8 +362,6 @@ fn focus_zero_is_the_plain_mean_exactly_even_after_focusing() {
 
 #[test]
 fn emitted_light_stays_in_range_and_keeps_the_plain_brightness() {
-    // Every focus at the default edge depth and on a one-pixel picture; a few
-    // at the extreme edge depths.
     let every: Vec<u8> = (1..=100).collect();
     let few = vec![1, 2, 50, 99, 100];
     for (width, height, reach, focuses) in [
@@ -428,7 +406,6 @@ fn brightness_follows_the_plain_mean_and_is_capped_at_full() {
         at_brightness_of(red, white),
         LinearColor::new(1.0, 0.0, 0.0)
     );
-    // Nothing to scale, or nothing to scale to: the plain mean.
     assert_eq!(at_brightness_of(LinearColor::black(), grey), grey);
     let nan = LinearColor::new(f32::NAN, 0.0, 0.0);
     assert_eq!(at_brightness_of(nan, grey), grey);
@@ -503,7 +480,6 @@ fn lights_beside_each_half_take_its_hue_as_focus_rises() {
             *previous = difference;
         }
     }
-    // Beside the boundary the plain mean is visibly mixed; focus mostly undoes it.
     let plain = hue_difference(at(0).top.sample_at(0.4), linear(left));
     let focused = hue_difference(at(100).top.sample_at(0.4), linear(left));
     assert!(focused < plain / 2.0, "{focused} against {plain}");
@@ -526,7 +502,6 @@ fn grey_next_to_a_saturated_object_keeps_the_objects_hue() {
 
 #[test]
 fn a_small_change_of_the_picture_moves_the_lights_a_little() {
-    // A boundary right beside the top strip's middle LEDs, moved by a pixel.
     let at = |boundary: u32, focus| {
         let view = picture(WIDTH, HEIGHT, |x, _| {
             if x < boundary {
@@ -545,9 +520,6 @@ fn a_small_change_of_the_picture_moves_the_lights_a_little() {
             .fold(0.0_f32, f32::max)
     };
     let (plain, focused) = (largest_change(0), largest_change(100));
-    // The LED at the boundary sees half a step move in the plain mean. Focus
-    // sharpens the boundary, so the same move counts more (3.2 times here, as
-    // much as the formula on every cell gives), but boundedly.
     assert!(plain > 0.3, "{plain} steps");
     assert!(focused < plain * 4.0, "{focused} against {plain} steps");
 }
@@ -557,12 +529,12 @@ fn a_new_geometry_rebuilds_the_fields_and_frames_reuse_their_storage() {
     let mut sampler = sampler(50, 10);
     let view = random_blocks(5, 16, false);
     let _ = sampler.process(&view);
-    let near = sampler.focus.fields[0].near.as_ptr();
+    let near = sampler.focus.fields.near.as_ptr();
     let tints = sampler.focus.groups.tints.as_ptr();
     let blocks = sampler.focus.blocks.colors.as_ptr();
-    let before = sampler.focus.fields[0].near.len();
+    let before = sampler.focus.fields.near.len();
     let _ = sampler.process(&random_blocks(6, 16, false));
-    assert_eq!(sampler.focus.fields[0].near.as_ptr(), near, "fields kept");
+    assert_eq!(sampler.focus.fields.near.as_ptr(), near, "fields kept");
     assert_eq!(
         sampler.focus.groups.tints.as_ptr(),
         tints,
@@ -574,7 +546,6 @@ fn a_new_geometry_rebuilds_the_fields_and_frames_reuse_their_storage() {
         "block colours reused"
     );
 
-    // A crop changes the geometry: the fields match a fresh sampler's.
     let mut cropped = view.clone();
     cropped.viewport = Viewport {
         x: 0,
@@ -585,9 +556,8 @@ fn a_new_geometry_rebuilds_the_fields_and_frames_reuse_their_storage() {
     let _ = sampler.process(&cropped);
     let mut fresh = super::tests::sampler(50, 10);
     let _ = fresh.process(&cropped);
-    assert_ne!(sampler.focus.fields[0].near.len(), before);
+    assert_ne!(sampler.focus.fields.near.len(), before);
     assert_eq!(sampler.focus.fields, fresh.focus.fields);
-    // A changed edge depth too.
     sampler.set_reach(30);
     let _ = sampler.process(&cropped);
     let mut deeper = super::tests::sampler(50, 30);

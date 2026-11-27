@@ -133,8 +133,6 @@ impl LinearColor {
         if floor.is_neutral() || lift <= 0.0 {
             return self;
         }
-        // A deep blue can leave no room for all of the white; the gamut limit
-        // then gives up tint rather than the floor's luminance or the hue.
         Self::new(self.r + lift, self.g + lift, self.b + lift).scale_chroma(1.0)
     }
 
@@ -238,7 +236,6 @@ mod tests {
                 if input.r == input.g && input.g == input.b {
                     assert!(output.r == output.g && output.g == output.b, "{output:?}");
                 }
-                // Same hue: the chroma only grows along its own direction.
                 let (before, after) = (chroma(input), chroma(output));
                 let size = after.map(f32::abs).iter().sum::<f32>();
                 assert!(size >= previous - 1e-6, "{input:?} at {strength}");
@@ -254,7 +251,6 @@ mod tests {
                 previous = size;
             }
         }
-        // With room to grow, a muted green reaches twice its chroma.
         let sage = LinearColor::new(0.2, 0.3, 0.18);
         let doubled = chroma(sage.boost_saturation(Boost(100)));
         for (b, a) in chroma(sage).into_iter().zip(doubled) {
@@ -283,8 +279,6 @@ mod tests {
                     assert!((output.luminance() - f).abs() < 1e-5, "{input:?}");
                 }
             }
-            // Along each ray from black: luminance never falls as the input
-            // brightens, and nothing jumps where the floor stops applying.
             for direction in [
                 LinearColor::new(1.0, 0.4, 0.1),
                 LinearColor::new(0.2, 0.2, 1.0),
@@ -306,7 +300,6 @@ mod tests {
                 }
             }
         }
-        // The colour's own tint stays on top of the glow.
         let ember = LinearColor::new(0.02, 0.005, 0.0).with_dark_floor(Floor(10));
         assert!(ember.r > ember.g && ember.g > ember.b && ember.b > 0.0);
         assert!((ember.r - ember.b - 0.02).abs() < 1e-6);
@@ -314,7 +307,6 @@ mod tests {
 
     #[test]
     fn round_trip_identity() {
-        // Every sRGB u8 value should round-trip through LinearColor within +/-1
         for r in 0..=255u8 {
             let color = Color::new(r, r, r);
             let linear = LinearColor::from_srgb(color);
@@ -329,15 +321,12 @@ mod tests {
 
     #[test]
     fn known_values() {
-        // sRGB 0 -> linear 0.0
         let black = LinearColor::from_srgb(Color::new(0, 0, 0));
         assert_eq!(black.r, 0.0);
 
-        // sRGB 255 -> linear 1.0
         let white = LinearColor::from_srgb(Color::new(255, 255, 255));
         assert_eq!(white.r, 1.0);
 
-        // sRGB 128 -> ~0.2158 linear
         let mid = LinearColor::from_srgb(Color::new(128, 128, 128));
         assert!(
             (mid.r - 0.2158).abs() < 0.001,
@@ -352,7 +341,6 @@ mod tests {
         let white = LinearColor::new(1.0, 1.0, 1.0);
         let mid = black.blend(&white, 0.5);
 
-        // Linear midpoint 0.5 should map to sRGB ~188 (not 128)
         let srgb = mid.to_srgb();
         assert!(
             (i16::from(srgb.r) - 188).unsigned_abs() <= 1,

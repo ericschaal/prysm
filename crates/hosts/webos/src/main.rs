@@ -66,7 +66,6 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
         .surface(EngineLink::new(
             link,
             video,
-            args.target,
             Box::new(move || lan_url(address)),
         ))
         // The TV app is a `file://` page (`Origin: null`); it needs CORS. A

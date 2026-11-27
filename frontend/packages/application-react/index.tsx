@@ -1,5 +1,8 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 import type { ApplicationRuntime, Connection } from '@prysm/application-state';
+
+const noSubscription = () => () => {};
+const noConnection = () => null;
 
 /**
  * The connection of `application` (its status and latest state), rendered
@@ -15,14 +18,8 @@ export function useConnection<C, O>(
 export function useConnection<C, O>(
   application: ApplicationRuntime<C, O> | null,
 ): Connection<C, O> | null {
-  const subscribe = useCallback(
-    (changed: () => void) =>
-      application ? application.store.subscribe(changed) : () => {},
-    [application],
-  );
-  return useSyncExternalStore(subscribe, () =>
-    application
-      ? application.selectors.selectConnection(application.store.getState())
-      : null,
+  return useSyncExternalStore(
+    application?.subscribe ?? noSubscription,
+    application?.getConnection ?? noConnection,
   );
 }

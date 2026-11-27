@@ -2,20 +2,13 @@ use prysm_ports::{Mode, Modes, Span, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 
-/// What LG's capture driver delivers: it scales to the size asked, even
-/// sides (NV12) from 2 up to full HD, paced at 1 to 60 fps. Sizes run on a
-/// TV include 320×180, 640×280 and 640×360; the upper bounds are the panel
-/// size and the driver's pacing, not measured. The driver's own answer
-/// (`vtCapture_capabilityInfo`, undecoded) belongs here once it is read: both
-/// [`WebosSettings::validate`] and [`WebosCapture::modes`](crate::WebosCapture)
-/// answer from this one value.
+/// Capture mode bounds used for settings validation and mode discovery.
 pub const MODE: Mode = Mode::new(
     Span::new(2, 1920, 2).expect("a span"),
     Span::new(2, 1080, 2).expect("a span"),
     Span::new(1, 60, 1).expect("a span"),
 );
-/// The TV UI plane's size bounds: HAL fails below 256x144 on the measured
-/// TV, and its cost grows with the size.
+/// Bounds for the dimensions requested from the TV UI plane.
 const UI_WIDTH: RangeInclusive<u16> = 256..=320;
 const UI_HEIGHT: RangeInclusive<u16> = 144..=180;
 
@@ -68,14 +61,8 @@ impl WebosSettings {
         Modes::from(MODE).check(self.width, self.height, self.fps)
     }
 
-    /// The TV UI (graphics plane) capture size, used only while there is no
-    /// video: each axis of the configured size clamped to 256–320 × 144–180.
-    /// HAL's cost grows with the output size, and it fails below 256×144 on
-    /// the measured TV. Axes are clamped independently: the plane is 16:9 and
-    /// is scaled to fill the surface, exactly as the video tap fills a
-    /// non-16:9 configured size, so edge sampling sees the same picture.
+    /// Dimensions requested for the TV graphics plane while video is unavailable.
     pub(crate) fn ui_size(&self) -> (u16, u16) {
-        // A side beyond `u16` is above the bound anyway.
         let clamp = |value: u32, bounds: RangeInclusive<u16>| {
             u16::try_from(value).map_or(*bounds.end(), |value| {
                 value.clamp(*bounds.start(), *bounds.end())

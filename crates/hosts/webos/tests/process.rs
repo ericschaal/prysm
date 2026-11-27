@@ -33,7 +33,7 @@ fn help_goes_to_stderr() {
 fn spawn(settings: &std::path::Path) -> std::process::Child {
     Command::new(BINARY)
         .args(["--settings", settings.to_str().unwrap()])
-        .args(["--listen", "127.0.0.1:0", "--target", "off"])
+        .args(["--listen", "127.0.0.1:0"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

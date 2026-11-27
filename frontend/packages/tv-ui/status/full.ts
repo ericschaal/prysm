@@ -1,34 +1,36 @@
-/**
- * The full package's status card: what it is about, in order, and its
- * button. The lights are this TV's own portal's.
- */
 import {
+  outputIssueHeadline,
   pictureOf,
+  plainFailure,
   unreachable,
-  type LightingFailure,
-  type LightingMode,
+  whenLightsAnswer,
   type LightingSituation,
-  type OutputIssue,
 } from '@prysm/application-client';
 import {
   fullLights,
   fullPortal,
   isCapturing,
   problemOf,
-  type Asked,
   type LightingTarget,
   type State,
 } from '@prysm/webos-platform';
 import {
   noLights,
   remedyOf,
-  tvSituation,
-  type Button,
   type FullState,
-  type NoPicture,
   type PortalFacts,
-  type SharedSituation,
 } from './situation';
+import {
+  note,
+  warning,
+  noPictureCopy,
+  problemCopy,
+  stopping,
+  setupLights,
+  tvCopy,
+  updating,
+  type Copy,
+} from './copy';
 
 /**
  * Full: why the lights don't show screen sync, or that they don't answer
@@ -36,10 +38,7 @@ import {
  * once it is known (while screen sync runs), as the worker last said
  * before.
  */
-function lightsIssue(
-  state: State,
-  portal: PortalFacts | null,
-): OutputIssue | null {
+function lightsIssue(state: State, portal: PortalFacts | null): string | null {
   if (!portal?.lighting) return fullLights(state);
   return portal.lighting.kind === 'sync' ? (portal.issue ?? null) : null;
 }
@@ -49,160 +48,117 @@ function lightsIssue(
  * portal's word while it answers, else the target's (with no worker,
  * Prysm itself stopped).
  */
-export type Headline =
-  | 'prysmStopped'
-  | 'syncStopped'
-  | 'syncNotStarted'
-  | 'effectsStopped'
-  | 'off'
-  | 'effectsOn'
-  | 'syncOn';
-
 function headlineOf(
   state: FullState,
   lighting: LightingSituation | undefined,
-): Headline {
-  const said = lighting && lightingHeadline(lighting);
-  if (said) return said;
+): string {
+  switch (lighting?.kind) {
+    case 'failed':
+      if (lighting.target === 'effects') return 'WLED effects stopped';
+      return lighting.fromEffects
+        ? 'Screen sync didn’t start'
+        : 'Screen sync stopped';
+    case 'off':
+      return 'Lights off';
+    case 'effects':
+      return 'WLED effects on';
+    case 'sync':
+      return 'Screen sync on';
+  }
   switch (state.target) {
     case 'screen_sync':
-      return 'syncStopped';
+      return 'Screen sync stopped';
     case 'effects':
-      return 'effectsStopped';
+      return 'WLED effects stopped';
     case 'off':
-      return state.worker.phase === 'asking' ? 'prysmStopped' : 'off';
+      return state.worker.phase === 'asking' ? 'Prysm stopped' : 'Lights off';
     case 'unknown':
-      return 'prysmStopped';
+      return 'Prysm stopped';
     default:
       return unreachable(state.target);
   }
 }
 
-/** What the lights do or what failed, by the portal; `null` when it says neither. */
-function lightingHeadline(lighting: LightingSituation): Headline | null {
-  switch (lighting.kind) {
-    case 'failed':
-      if (lighting.target === 'effects') return 'effectsStopped';
-      return lighting.fromEffects ? 'syncNotStarted' : 'syncStopped';
-    case 'off':
-      return 'off';
-    case 'effects':
-      return 'effectsOn';
-    case 'sync':
-      return 'syncOn';
-    case 'faulted':
-    case 'unknown':
-    case 'unanswered':
-    case 'starting':
-      return null;
-    default:
-      return unreachable(lighting);
-  }
+const seeLights = 'See Your lights for what to do.';
+
+function issueCopy(issue: string, target: LightingTarget): Copy {
+  return warning(
+    outputIssueHeadline(issue),
+    issue === 'unreachable'
+      ? whenLightsAnswer(target, 'WLED effects')
+      : seeLights,
+  );
 }
 
-/** Full: what the status card is about ({@link fullSituation}). */
-export type FullSituation =
-  | SharedSituation
-  | NoPicture
-  /** What the service asks, under what the lights do or what stopped. */
-  | { kind: 'problem'; asked: Asked; headline: Headline }
-  | { kind: 'faulted' }
-  /** The portal says it failed; the service does not say yet what is asked. */
-  | { kind: 'lightingFailed'; headline: Headline }
-  | { kind: 'newer' }
-  | { kind: 'off'; failure: LightingFailure | null }
-  | { kind: 'effects' }
-  /** `target`: what was chosen; with Off or effects, only `unreachable`. */
-  | { kind: 'lightsIssue'; issue: OutputIssue; target: LightingTarget }
-  | { kind: 'syncOn' }
-  | { kind: 'starting'; target: LightingMode };
+function starting(target: LightingTarget): Copy {
+  return note(
+    target === 'effects' ? 'Starting WLED effects…' : 'Starting screen sync…',
+    'This takes a few seconds.',
+  );
+}
 
-/**
- * Full: what the status card is about, by the portal's situation once it is
- * known. The first that applies is said.
- */
-export function fullSituation(
-  state: FullState,
-  portal: PortalFacts | null,
-): FullSituation {
+export function fullStatus(state: FullState, portal: PortalFacts | null): Copy {
   const phase = state.worker.phase;
   const lighting = portal?.lighting;
   const problem = problemOf(state);
-  // A stop that asks says what it asks; any other is a restart.
-  if (phase === 'stopping' && !problem) return { kind: 'stopping' };
-  if (noLights(portal)) return { kind: 'setUpLights' };
-  if (phase === 'unknown') return { kind: 'updating' };
-  // What the service asks, or a faulted or failed session, comes before
-  // the TV's power and video. It is what needs the user; waking the TV or
-  // a picture would not end it, and saying "Waiting for video" over it
-  // would hide it. Lights that are fine (off, effects, screen sync) let
-  // power and video speak first. The service's word is the one fix, also
-  // with the lights off, and before lights the portal says it waits for:
-  // Prysm stopped trying.
-  if (problem)
+  if (phase === 'stopping' && !problem) return stopping('full');
+  if (noLights(portal)) return setupLights;
+  if (phase === 'unknown') return updating;
+  if (problem) {
+    const remedy = remedyOf(problem.asked);
+    const disabled =
+      phase === 'stopping' ||
+      (remedy === 'retry' && state.target === 'unknown');
     return {
-      kind: 'problem',
-      asked: problem.asked,
-      headline: headlineOf(state, lighting),
+      ...problemCopy(problem.asked, headlineOf(state, lighting), 'full'),
+      button: disabled ? 'none' : remedy,
     };
-  if (lighting?.kind === 'faulted') return { kind: 'faulted' };
+  }
+  if (lighting?.kind === 'faulted')
+    return warning('Prysm stopped responding', 'This takes a moment.');
+  const waiting = portal?.control?.waiting;
+  if (waiting)
+    return note(
+      waiting === 'capture' ? 'Waiting for video' : 'Waiting for the lights',
+      'Press Power to cancel.',
+    );
+  if (portal?.control?.external)
+    return note('Live stream detected', 'Choose a mode to control the lights.');
   if (lighting?.kind === 'failed')
-    return { kind: 'lightingFailed', headline: headlineOf(state, lighting) };
-  const tv = tvSituation(state);
+    return warning(headlineOf(state, lighting), seeLights);
+  const tv = tvCopy(state);
   if (tv) return tv;
   if (lighting?.kind === 'unknown' || (!lighting && state.target === 'unknown'))
-    return { kind: 'newer' };
-  // A mode asked for is starting until the session reaches it.
-  if (lighting?.kind === 'starting')
-    return { kind: 'starting', target: lighting.target };
-  // With the lights off or their effects, lights that don't answer: the
-  // target stays and is applied once they answer.
+    return note(
+      'Prysm is newer than this app',
+      'Update the app to see what the lights do.',
+    );
+  if (lighting?.kind === 'starting') return starting(lighting.target);
   if (lighting?.kind === 'unanswered')
-    return {
-      kind: 'lightsIssue',
-      issue: 'unreachable',
-      target: lighting.target,
-    };
-  // Before the portal's first snapshot, the TV service's target; it hears
-  // of a change made in the portal a moment later.
+    return issueCopy('unreachable', lighting.target);
+  // Until the first portal state, use the service's last reported target and issue.
   const target = lighting ? null : state.target;
-  // The lights don't show what was chosen; the lights card says why, as
-  // for a refused video.
   const issue = lightsIssue(state, portal);
   if (issue === 'unreachable' && (target === 'off' || target === 'effects'))
-    return { kind: 'lightsIssue', issue, target };
+    return issueCopy(issue, target);
+  if (lighting?.kind === 'off' && lighting.failure)
+    return warning(
+      'Lights off',
+      plainFailure(lighting.failure, 'off', 'WLED effects'),
+    );
   if (lighting?.kind === 'off' || target === 'off')
-    return {
-      kind: 'off',
-      failure: lighting?.kind === 'off' ? lighting.failure : null,
-    };
+    return note(
+      'Lights off',
+      'Choose Screen sync: the lights follow the picture.',
+    );
   if (lighting?.kind === 'effects' || target === 'effects')
-    return { kind: 'effects' };
-  // Screen sync runs (also while it waits for lights that don't answer).
-  if (issue) return { kind: 'lightsIssue', issue, target: 'screen_sync' };
-  // The portal's measure; it alone says why no picture arrives.
+    return note('WLED effects on', 'Your lights run their own effects.');
+  if (issue) return issueCopy(issue, 'screen_sync');
   const picture = lighting?.input ? pictureOf(lighting.input) : undefined;
-  // Without the portal's measure yet, the TV's own word.
   const flowing = picture ? picture === 'arriving' : isCapturing(state);
-  if (flowing) return { kind: 'syncOn' };
-  if (picture === 'refused')
-    return { kind: 'waitingForVideo', picture: 'refused' };
-  // Lighting is on but no frames arrive: the lights are released to WLED.
+  if (flowing) return note('Screen sync on', 'Your lights follow the picture.');
+  if (picture === 'refused') return noPictureCopy('refused', 'full');
   if (fullPortal(state) && phase === 'running')
-    return { kind: 'waitingForVideo', picture: 'quiet' };
-  return { kind: 'starting', target: 'screen_sync' };
-}
-
-/**
- * Full: the modes start and stop the lights, so the button only answers
- * what the card says the service asks, as its fix says: try again (the
- * target again), set up the service, or nothing that could help. Nothing
- * while the worker stops, or for a target newer than this app (nothing to
- * send).
- */
-export function fullButton(state: FullState, situation: FullSituation): Button {
-  if (situation.kind !== 'problem' || state.worker.phase === 'stopping')
-    return 'none';
-  const remedy = remedyOf(situation.asked);
-  return remedy === 'retry' && state.target === 'unknown' ? 'none' : remedy;
+    return noPictureCopy('quiet', 'full');
+  return starting('screen_sync');
 }

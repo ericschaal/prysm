@@ -42,7 +42,6 @@ mod tests {
             Err(Error::Timeout)
         ));
         assert!(matches!(session.open(), Err(Error::Failed)));
-        // A later result cannot reopen it.
         session.record(Ok(())).unwrap();
         assert!(matches!(session.open(), Err(Error::Failed)));
     }

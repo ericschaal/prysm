@@ -169,7 +169,6 @@ fn unrelated_files_are_never_replaced_or_removed() {
 
     fs::remove_file(s.path(&our_hook())).unwrap();
     nix::unistd::mkfifo(&s.path(&our_hook()), nix::sys::stat::Mode::S_IRUSR).unwrap();
-    // A FIFO is refused without blocking.
     assert_fails(s.installer.install(), |e| {
         matches!(e, InstallError::Hook { .. })
     });
@@ -209,12 +208,10 @@ fn our_manifest_of_another_version_is_replaced_atomically() {
         .collect();
     assert_eq!(names.len(), 2, "no temporary file left: {names:?}");
 
-    // The same version is left alone.
     fs::remove_file(&link).unwrap();
     s.installer.install().unwrap();
     assert_eq!(fs::metadata(&path).unwrap().ino(), metadata.ino());
 
-    // Uninstall removes ours of any version.
     let worker = s.path(&manifest("worker"));
     let mut old: Value = serde_json::from_slice(&fs::read(&worker).unwrap()).unwrap();
     old["version"] = "2.0.0".into();

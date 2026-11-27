@@ -113,7 +113,6 @@ mod tests {
 
     #[test]
     fn colors_outside_srgb_come_back_without_negative_light() {
-        // Far beyond saturated green: some channel would be negative.
         let outside = Oklab {
             l: 0.5,
             a: -0.4,

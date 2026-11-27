@@ -132,6 +132,8 @@ class SshImage(OnTarget):
         self.image_id: str | None = None  # what the run loaded, for the report
         self.composed = False  # the compose files are in the run directory: `close` takes the project down
         self.exit_code: int | str | None = None
+        self._upload = commands.image_deliver(self.target, self.run, str(image))
+        self._load = commands.image_load(self.target, self.run)
 
     def _run(self, command: commands.Command, check: bool = True) -> Result:
         return self.transport.run(command, check=check)
@@ -167,7 +169,7 @@ class SshImage(OnTarget):
                 ),
             ],
             start=[
-                *shown(commands.image_deliver(target, run, str(self.image)), commands.image_load(target, run)),
+                *shown(self._upload, self._load),
                 f'write RUN_DIR/CELL/{RunFile.OVERRIDE}: restart "no", command ["--metrics"], devices !override '
                 f"[DEVICE:{CONTAINER_DEVICE}], group_add !override [the device's GID]",
                 *shown(
@@ -230,8 +232,8 @@ class SshImage(OnTarget):
 
     def deliver(self) -> str:
         self.delivered = True  # from here on `close` removes the run directory, also after a failure
-        self.since = int(self._run(commands.image_deliver(self.target, self.run, str(self.image))).stdout.split()[-1])
-        self.image_id = self._run(commands.image_load(self.target, self.run)).stdout.split()[-1]
+        self.since = int(self._run(self._upload).stdout.split()[-1])
+        self.image_id = self._run(self._load).stdout.split()[-1]
         return f'loaded {self.image.name} on {self.target} as {commands.IMAGE_TAG} ({self.image_id})'
 
     def place(self, clip: Path) -> str:

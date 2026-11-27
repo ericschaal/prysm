@@ -323,7 +323,6 @@ fn main() -> io::Result<()> {
     for case in &cases {
         report(out, case, &base, &options)?;
     }
-    // Colour focus costs most at the deepest edge, where its near field is largest.
     let deep = Config {
         spatial_reach_percent: SpatialReachPercent(100),
         ..base

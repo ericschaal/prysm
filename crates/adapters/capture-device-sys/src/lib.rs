@@ -6,7 +6,9 @@ use prysm_ports::{Escalation, Fix};
 mod device;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod formats;
-pub use device::{CaptureSink, DeviceInfo, capture, list_devices, list_formats};
+pub use device::{
+    CaptureSink, DeviceInfo, capture, check_device, list_devices, list_formats, watch_device,
+};
 
 /// Terminal capture failures. Cancellation closes the stream successfully.
 #[derive(Debug, thiserror::Error)]
@@ -73,8 +75,6 @@ impl CaptureError {
             Self::Denied { .. } | Self::NoCameraAccess(CameraAccess::Denied) => {
                 Escalation::Ask(Fix::SetUp)
             }
-            // The device may still hold buffers or the fd: only a new
-            // process frees them.
             Self::Cleanup(_) => Escalation::Restart,
             Self::Disconnected { .. }
             | Self::Busy { .. }
@@ -153,8 +153,6 @@ pub enum BufferRejection {
 
 type Result<T> = std::result::Result<T, CaptureError>;
 
-/// The colour matrix of a picture whose source does not name one: BT.709 for
-/// HD (720 lines and up), BT.601 below, as FFmpeg and browsers assume.
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn unspecified_matrix(height: u32) -> prysm_core::YuvStandardMatrix {
     if height >= 720 {

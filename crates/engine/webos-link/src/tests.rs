@@ -170,7 +170,6 @@ fn unknown_types_and_fields_are_rejected() {
         format!(r#"{{"type":"status","flavor":"slim","capturing":false,"link":{link}}}"#)
     };
     const FULL: &str = r#""capturing":false,"target":"off","applied":0"#;
-    // Both base lines are valid, so each rejection below is for its change.
     for valid in [
         format!(r#"{{"type":"status","flavor":"slim",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL}}}"#),
@@ -180,7 +179,6 @@ fn unknown_types_and_fields_are_rejected() {
     for text in [
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"pid":1}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL},"pid":1}}"#),
-        // The failure without its escalation, as text, or with another field.
         r#"{"type":"failed","cause":"x"}"#.to_owned(),
         r#"{"type":"failed","message":"x"}"#.to_owned(),
         r#"{"type":"failed","escalation":"restart","message":"x"}"#.to_owned(),
@@ -190,14 +188,12 @@ fn unknown_types_and_fields_are_rejected() {
         format!(
             r#"{{"type":"status","flavor":"full",{FULL},"failure":{{"kind":"other","message":"x"}}}}"#
         ),
-        // No flavour, an unknown one, or the other flavour's fields.
         format!(r#"{{"type":"status",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"tv",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{FULL}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL},"link":{{"state":"paused"}}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"portal":"x"}}"#),
-        // No link, an unknown state, or a field another state has.
         r#"{"type":"status","flavor":"slim","capturing":false}"#.to_owned(),
         r#"{"type":"status","flavor":"slim","capturing":false,"link":"sending"}"#.to_owned(),
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"paused":false}}"#),
@@ -205,7 +201,6 @@ fn unknown_types_and_fields_are_rejected() {
         slim_link(r#"{"state":"paused","fps":1}"#),
         slim_link(r#"{"state":"starting","failure":{"kind":"other","message":"x"}}"#),
         slim_link(r#"{"state":"sending","encoding":"raw"}"#),
-        // The failure as text, without its kind, or with another field.
         slim_link(r#"{"state":"waiting","failure":"x"}"#),
         slim_link(r#"{"state":"failed","failure":{"message":"x"}}"#),
         slim_link(r#"{"state":"failed","failure":{"kind":"other","message":"x","at":1}}"#),
@@ -295,7 +290,6 @@ fn full_args_round_trip_and_reject_mistakes() {
     let args = FullArgs {
         settings: PathBuf::from("/var/lib/prysm/settings.json"),
         listen: "0.0.0.0:8787".parse().unwrap(),
-        target: LightingTarget::Effects,
     };
     let argv = args.to_args();
     assert_eq!(
@@ -304,24 +298,13 @@ fn full_args_round_trip_and_reject_mistakes() {
             "--settings",
             "/var/lib/prysm/settings.json",
             "--listen",
-            "0.0.0.0:8787",
-            "--target",
-            "effects"
+            "0.0.0.0:8787"
         ])
     );
     assert_eq!(parse::<FullArgs>(&argv).unwrap(), args);
-    for target in LightingTarget::ALL {
-        let args = FullArgs {
-            listen: "[::1]:0".parse().unwrap(),
-            target,
-            ..args.clone()
-        };
-        assert_eq!(parse::<FullArgs>(&args.to_args()).unwrap(), args);
-    }
     for bad in [
-        strings(&["--settings", "s", "--listen", "0.0.0.0:8787"]),
-        strings(&["--settings", "s", "--listen", "x", "--target", "off"]),
-        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--target", "on"]),
+        strings(&["--settings", "s"]),
+        strings(&["--settings", "s", "--listen", "x"]),
         strings(&[
             "--settings",
             "s",
@@ -329,10 +312,15 @@ fn full_args_round_trip_and_reject_mistakes() {
             "t",
             "--listen",
             "0.0.0.0:1",
+        ]),
+        strings(&[
+            "--settings",
+            "s",
+            "--listen",
+            "0.0.0.0:1",
             "--target",
             "off",
         ]),
-        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--target"]),
         strings(&["full", "--settings", "s"]),
         strings(&["--prysm", "http://1.2.3.4:5"]),
     ] {
@@ -359,11 +347,28 @@ fn slim_args_carry_only_the_prysm_address() {
     );
     let error = parse::<SlimArgs>(&[]).unwrap_err().to_string();
     assert!(error.contains("--prysm"), "{error}");
-    // A host name is resolved by the worker, not here.
     let named = parse::<SlimArgs>(&strings(&["--prysm", "https://prysm.example.com"])).unwrap();
     assert_eq!(named.prysm.host(), "prysm.example.com");
     assert_eq!(
         named.to_args(),
         strings(&["--prysm", "https://prysm.example.com"])
+    );
+}
+
+#[test]
+fn recovery_messages_round_trip() {
+    for command in [
+        Command::Resume { sequence: 9 },
+        Command::RecoverScreenSync { sequence: 10 },
+        Command::ObserveVideo { available: true },
+        Command::ObserveVideo { available: false },
+    ] {
+        let bytes = encode(&command).unwrap();
+        assert_eq!(serde_json::from_slice::<Command>(&bytes).unwrap(), command);
+    }
+    let bytes = encode(&Event::Initialized {}).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Event>(&bytes).unwrap(),
+        Event::Initialized {}
     );
 }

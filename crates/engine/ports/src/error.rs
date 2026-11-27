@@ -142,8 +142,6 @@ impl Error {
             }
             Self::Adapter { escalation, .. } => *escalation,
             Self::Faulted(_) => Escalation::Restart,
-            // A rejected request; a bug, which a new process repeats; the
-            // answer while shutting down.
             Self::StaleRevision { .. }
             | Self::NeedsScreenSync
             | Self::Panicked(_)

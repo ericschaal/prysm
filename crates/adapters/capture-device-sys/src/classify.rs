@@ -8,7 +8,6 @@ use std::io;
 /// What capture asked of the device when it failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Op {
-    /// Opening the device node.
     Open,
     /// `VIDIOC_S_FMT`, then reading back what the driver set.
     SetFormat,
@@ -28,7 +27,6 @@ pub(crate) enum Op {
     Release,
 }
 
-/// What an error means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fault {
     /// ENODEV: the node is unregistered (unplugged or reset). The V4L2 core
@@ -57,8 +55,6 @@ pub(crate) enum Fault {
     Other,
 }
 
-/// The table. Errnos are an open set: those without a row are
-/// [`Fault::Other`].
 pub(crate) fn classify(op: Op, error: &io::Error) -> Fault {
     match (op, error.raw_os_error()) {
         (_, Some(libc::ENODEV)) => Fault::Gone,

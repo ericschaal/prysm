@@ -28,12 +28,6 @@ const idlePreview: PreviewClient = {
   preview: () => Promise.reject(new Error('No preview.')),
 };
 
-/**
- * Whether the section works, at the top of its editor: a small live picture
- * (the video source, only while frames flow) or the lights' mark, and a line
- * of words; below it, while it fails, Prysm's own words and `hint`. `brief`:
- * the failure is told elsewhere (the save bar), so not here.
- */
 export function SectionStatus({
   section,
   status,
@@ -54,7 +48,6 @@ export function SectionStatus({
   const showing = picture && size !== null;
   const mark = section === 'capture' ? <VideoIcon /> : <LightsIcon />;
   const detail = picture && size ? `${size} · ${status.detail}` : status.detail;
-  // Why it fails and what to check, under the card's line, full width.
   const more = brief
     ? []
     : [status.details, hint].filter((line) => line !== undefined);

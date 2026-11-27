@@ -24,18 +24,10 @@ pub(crate) enum Cause<'a> {
 pub(crate) fn escalation(cause: Cause<'_>) -> Escalation {
     use RequestError as R;
     match cause {
-        // Nothing answered: the device may be off or away from the network,
-        // which nothing in Prysm changes and nothing announces the end of.
-        // A local socket the connect could not create comes here too: the
-        // connect's error does not say which it was.
         Cause::Request(R::Connect(CallError::Failed(_)) | R::Io(_) | R::TimedOut(_))
         | Cause::Request(R::Malformed(Malformed::Closed))
-        // The lookup's error does not tell a name nobody answers for from a
-        // lookup thread that could not run.
         | Cause::Resolve(CallError::Failed(_)) => Escalation::Unanswered,
-        // Something answered that is not a WLED, or not where the settings
-        // point: only other settings change that.
-        Cause::Request(R::Status(404) | R::TooLarge(_) | R::Json(_))
+        Cause::Request(R::Status(404) | R::TooLarge | R::Json(_))
         | Cause::Request(R::Malformed(
             Malformed::HeaderNotUtf8
             | Malformed::StatusLine
@@ -43,9 +35,6 @@ pub(crate) fn escalation(cause: Cause<'_>) -> Escalation {
             | Malformed::ChunkSize,
         ))
         | Cause::NotUnicast => Escalation::Ask(Fix::ChangeSettings),
-        // A WLED that refused the request; a cut, which the one who cut it
-        // follows up; a local socket; a send with no reason to clear: no
-        // cause here has an argument that it passes.
         Cause::Request(
             R::Status(_)
             | R::Rejected(_)
@@ -62,22 +51,16 @@ pub(crate) fn escalation(cause: Cause<'_>) -> Escalation {
 /// What a held output does after a colour frame's send failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Send {
-    /// The frame is dropped and `write` succeeds: the datagram could not
-    /// leave now, and the next frame is the next try. There is nothing to
-    /// wait for and nothing to keep.
+    /// Drop this frame and return success from `write`.
     FrameDropped,
-    /// `write` fails with the error (fail fast): no other cause has a
-    /// reason to clear by the next frame.
+    /// Return the send error from `write`.
     OutputFails,
 }
 
 /// What a send error from the DDP socket means, one row per cause.
 pub(crate) fn send(error: &io::Error) -> Send {
     match error.kind() {
-        // The socket's send buffer is full; it drains on its own.
         ErrorKind::WouldBlock
-        // No route to the device or its network now (address resolution
-        // failed, a link is down or coming up); the next send asks again.
         | ErrorKind::HostUnreachable
         | ErrorKind::NetworkUnreachable
         | ErrorKind::NetworkDown => Send::FrameDropped,
@@ -89,11 +72,7 @@ pub(crate) fn send(error: &io::Error) -> Send {
 #[cfg(unix)]
 fn without_kind(error: &io::Error) -> Send {
     match error.raw_os_error() {
-        // The interface's queue is full; it drains on its own.
-        Some(libc::ENOBUFS)
-        // The device does not answer address resolution (macOS); the next
-        // send asks again.
-        | Some(libc::EHOSTDOWN) => Send::FrameDropped,
+        Some(libc::ENOBUFS) | Some(libc::EHOSTDOWN) => Send::FrameDropped,
         _ => Send::OutputFails,
     }
 }
@@ -122,7 +101,6 @@ mod tests {
             (os(libc::ENETUNREACH), Send::FrameDropped),
             (kind(ErrorKind::NetworkDown), Send::FrameDropped),
             (os(libc::ENETDOWN), Send::FrameDropped),
-            // Anything else.
             (kind(ErrorKind::PermissionDenied), Send::OutputFails),
             (os(libc::EACCES), Send::OutputFails),
             (kind(ErrorKind::InvalidInput), Send::OutputFails),
@@ -149,7 +127,7 @@ mod tests {
             (R::TimedOut(std::time::Duration::from_secs(1)), unanswered),
             (R::Malformed(M::Closed), unanswered),
             (R::Status(404), settings),
-            (R::TooLarge(1024), settings),
+            (R::TooLarge, settings),
             (R::Json(json()), settings),
             (R::Malformed(M::HeaderNotUtf8), settings),
             (R::Malformed(M::StatusLine), settings),

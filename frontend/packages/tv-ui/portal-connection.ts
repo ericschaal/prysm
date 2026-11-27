@@ -11,7 +11,7 @@ import type {
 import {
   failureOf,
   STALE_MS,
-  streamStep,
+  terminalStreamFailure,
   type ApplicationClient,
   type ApplicationSnapshot,
   type LightingTarget,
@@ -48,11 +48,10 @@ export interface PortalOptions {
 
 /** What the HTTP client and the state runtime use beyond Chromium 53. */
 export function portalSupported(): boolean {
-  const scope = window as unknown as Record<string, unknown>;
   return (
-    typeof scope.AbortController === 'function' &&
-    typeof scope.TextDecoder === 'function' &&
-    typeof scope.ReadableStream === 'function' &&
+    typeof window.AbortController === 'function' &&
+    typeof window.TextDecoder === 'function' &&
+    typeof window.ReadableStream === 'function' &&
     typeof Promise.prototype.finally === 'function'
   );
 }
@@ -112,12 +111,8 @@ export function usePortal(
     [runtime, active],
   );
 
-  // Kept while the runtime retries, until a state arrives.
   const error = connection?.status === 'connected' ? null : connection?.error;
-  // Prysm's own answer ends the stream; only a lost connection leaves open
-  // whether anything answers at `baseUrl`.
-  const stopped =
-    error && streamStep[error.kind] !== 'reconnect' ? error : null;
+  const stopped = terminalStreamFailure(error);
   const refused = stopped?.kind === 'forbidden';
   const message = error && !stopped ? error.message : null;
   /** Whether anything answers at `baseUrl`, for the lost `message`. */
@@ -178,13 +173,11 @@ export function usePortal(
     /** Rejects when there is no portal to command (unsupported, no address). */
     setTarget: (target: LightingTarget) =>
       runtime
-        ? runtime.store.dispatch(runtime.commands.setTarget(target))
+        ? runtime.commands.setTarget(target)
         : Promise.reject(new Error('Prysm isn’t connected.')),
     /** End calibration: the lights return to the saved processing. */
     endCalibration: () =>
-      runtime
-        ? runtime.store.dispatch(runtime.commands.setCalibration(null))
-        : Promise.resolve(),
+      runtime ? runtime.commands.setCalibration(null) : Promise.resolve(),
   };
 }
 export type PortalView = ReturnType<typeof usePortal>;

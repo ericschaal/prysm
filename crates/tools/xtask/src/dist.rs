@@ -157,7 +157,9 @@ pub fn run(targets: &[Target]) -> Result<()> {
     // Read first, so a broken manifest fails before a long build.
     let manifest_path = dist.join("manifest.json");
     let mut manifest = Manifest::read(&manifest_path)?;
-    manifest.retain(|file| dist.join(file).is_file());
+    manifest
+        .artifacts
+        .retain(|file, _| dist.join(file).is_file());
     let mut builder = Builder {
         source: Source::current()?,
         docker: Docker::from_env(),
@@ -177,7 +179,7 @@ pub fn run(targets: &[Target]) -> Result<()> {
             .build(kind, &out)
             .with_context(|| format!("building {name}"))?;
         let entry = builder.source.entry(sha256(&out)?, SystemTime::now());
-        manifest.insert(name.clone(), entry);
+        manifest.artifacts.insert(name.clone(), entry);
         manifest.write(&manifest_path)?;
         let took = process::duration(target_started.elapsed());
         eprintln!("Wrote dist/{name} ({took})");

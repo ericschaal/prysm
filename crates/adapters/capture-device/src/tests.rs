@@ -287,7 +287,6 @@ fn a_format_check_that_never_returns_is_bounded_by_the_ready_wait() {
 
 #[test]
 fn newest_frame_wins() {
-    // Frames before readiness are already replaced.
     let (capture, native) = native();
     let opening = start(capture, TEST);
     for value in 0..100 {
@@ -309,7 +308,6 @@ fn newest_frame_wins() {
         Pull::Quiet
     ));
 
-    // An untaken frame is replaced, never queued.
     native.frame(1);
     assert_eq!(frames.pending_frame().unwrap().as_slice(), &[1; 96]);
     native.frame(2);
@@ -337,9 +335,7 @@ fn native_failure_propagates_and_release_is_still_certified() {
     let (mut frames, native) = opened();
     native.frame(1);
     native.exit(Err(disconnected()));
-    // A published failure also stops the sink.
     native.wait_stopped();
-    // The failure fences the frame that was never taken.
     let error = frames.next_frame(Duration::ZERO).unwrap_err();
     assert_eq!(
         chain(&error),
@@ -526,8 +522,6 @@ fn candidates_fill_a_valid_device() {
             serde_json::from_value(candidate.fields.clone().into()).unwrap();
         assert_eq!(settings.validate(), Ok(()), "{candidate:?}");
         assert_eq!(candidate.detail.as_deref(), Some(settings.device.as_str()));
-        // A device found answers for its formats, and open refuses a size
-        // none has before starting anything.
         assert!(
             matches!(DeviceSource.modes(&settings), Modes::Known(_)),
             "{candidate:?}"

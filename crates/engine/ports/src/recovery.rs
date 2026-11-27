@@ -48,7 +48,13 @@ impl Escalation {
     }
 }
 
-/// The person's next step.
+/// The person's next step. `try_again`: start again. `change_settings`:
+/// change the settings (in the portal); a save that validates replaces them.
+/// `set_up`: set up the service again: it lacks a permission it needs.
+/// `unsupported`: nothing makes this work on this TV. `restart_tv`: restart
+/// the TV: a worker that did not end may still hold the capture. Open: an
+/// app reads a fix it does not know as `try_again`.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fix {

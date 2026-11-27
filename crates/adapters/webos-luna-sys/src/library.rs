@@ -1,62 +1,56 @@
-//! The TV's vendor libraries, each loaded once per process and never
-//! unloaded: vendor code can leave threads running, global pointers set or
-//! descriptors open, so a `dlclose` could unmap code that still runs. Also
-//! used by `prysm-capture-webos-sys` for `libvtcapture` and `libhalgal`.
+//! Process-lifetime storage for vendor libraries and their resolved entry points.
 use crate::Error;
 use libloading::Library;
-use std::sync::{Mutex, PoisonError};
+use once_cell::sync::OnceCell;
 
-/// How far loading a library and its entry points `A` has come.
-pub enum Loaded<A: 'static> {
-    Nothing,
-    /// The library is loaded (and stays loaded); an entry point was missing.
-    Library(&'static Library),
-    Api(&'static A),
+/// Loads the first available library and retains it even if resolving symbols fails.
+pub struct VendorLibrary<A> {
+    names: &'static [&'static str],
+    handle: OnceCell<Library>,
+    api: OnceCell<A>,
 }
 
-/// The entry points `symbols` reads from the first of `names` that loads.
-/// The library and the entry points are kept in `slot` and never unloaded;
-/// a retry after a missing symbol reuses the library instead of loading,
-/// and leaking, another handle.
-///
-/// # Errors
-/// [`Error::Load`] when no name loads, or what `symbols` returns.
-pub fn load_once<A>(
-    slot: &Mutex<Loaded<A>>,
-    names: &[&str],
-    symbols: impl FnOnce(&'static Library) -> Result<A, Error>,
-) -> Result<&'static A, Error> {
-    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-    let library = match *slot {
-        Loaded::Api(api) => return Ok(api),
-        Loaded::Library(library) => library,
-        Loaded::Nothing => {
-            let library: &'static Library = Box::leak(Box::new(open(names)?));
-            *slot = Loaded::Library(library);
-            library
-        }
-    };
-    let api: &'static A = Box::leak(Box::new(symbols(library)?));
-    *slot = Loaded::Api(api);
-    Ok(api)
-}
-
-/// The first of `names` that loads.
-fn open(names: &[&str]) -> Result<Library, Error> {
-    let mut last = None;
-    for name in names {
-        // SAFETY: only the TV's own system libraries are named (LS2, GLib,
-        // VTCapture, HAL GAL); their constructors run as for any process that
-        // links them, and each is loaded once per process.
-        match unsafe { Library::new(*name) } {
-            Ok(library) => return Ok(library),
-            Err(error) => last = Some(error),
+impl<A> VendorLibrary<A> {
+    /// Create a cache for these library names, in lookup order.
+    ///
+    /// # Safety
+    /// Loading a library selected by these names must be safe for this process,
+    /// including running its initialization routines.
+    pub const unsafe fn new(names: &'static [&'static str]) -> Self {
+        Self {
+            names,
+            handle: OnceCell::new(),
+            api: OnceCell::new(),
         }
     }
-    Err(Error::Load {
-        library: names.join(" or "),
-        source: last.unwrap_or(libloading::Error::DlOpenUnknown),
-    })
+
+    /// Resolve entry points once. Failed opens and failed symbol lookups can be retried.
+    pub fn load(
+        &'static self,
+        symbols: impl FnOnce(&'static Library) -> Result<A, libloading::Error>,
+    ) -> Result<&'static A, Error> {
+        self.api
+            .get_or_try_init(|| {
+                let library = self.handle.get_or_try_init(|| self.open())?;
+                symbols(library)
+            })
+            .map_err(|source| Error::Load {
+                library: self.names.join(" or "),
+                source,
+            })
+    }
+
+    fn open(&self) -> Result<Library, libloading::Error> {
+        let mut last = None;
+        for name in self.names {
+            // SAFETY: the constructor requires every candidate to be safe to load.
+            match unsafe { Library::new(*name) } {
+                Ok(library) => return Ok(library),
+                Err(error) => last = Some(error),
+            }
+        }
+        Err(last.unwrap_or(libloading::Error::DlOpenUnknown))
+    }
 }
 
 #[cfg(test)]
@@ -74,44 +68,68 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot dlopen")]
     fn a_library_loads_once_and_a_missing_symbol_keeps_it() {
-        // The entry points: the library they were read from.
-        static SLOT: Mutex<Loaded<&'static Library>> = Mutex::new(Loaded::Nothing);
-        let missing = |_: &'static Library| {
-            Err(Error::Luna {
-                operation: "symbol",
-                message: "missing".into(),
-            })
-        };
-        // Nothing, symbols missing: the library stays loaded.
-        assert!(load_once(&SLOT, &[SYSTEM], missing).is_err());
-        let Loaded::Library(first) = *SLOT.lock().unwrap() else {
-            panic!("the library is kept");
-        };
-        // Library, symbols missing again: the same library, not a new one.
+        // SAFETY: SYSTEM names the host's system C library.
+        static SLOT: VendorLibrary<&Library> = unsafe { VendorLibrary::new(&[SYSTEM]) };
+        let missing = |_: &'static Library| Err(libloading::Error::DlSymUnknown);
+        assert!(SLOT.load(missing).is_err());
+        let first = SLOT.handle.get().unwrap();
         assert!(
-            load_once(&SLOT, &[SYSTEM], |library| {
+            SLOT.load(|library| {
                 assert!(std::ptr::eq(library, first));
                 missing(library)
             })
             .is_err()
         );
-        // Library, symbols found: the entry points are kept.
-        let api = load_once(&SLOT, &[SYSTEM], Ok).unwrap();
+        let api = SLOT.load(Ok).unwrap();
         assert!(std::ptr::eq(*api, first));
-        // Entry points: returned without reading anything.
-        let again = load_once(&SLOT, &[SYSTEM], |_| panic!("read again")).unwrap();
+        let again = SLOT.load(|_| panic!("read again")).unwrap();
         assert!(std::ptr::eq(again, api));
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot dlopen")]
+    fn concurrent_callers_share_the_successful_retry() {
+        use std::sync::{
+            Barrier,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        // SAFETY: SYSTEM names the host's system C library.
+        static SLOT: VendorLibrary<u8> = unsafe { VendorLibrary::new(&[SYSTEM]) };
+        let start = Barrier::new(8);
+        let attempts = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let callers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        SLOT.load(|_| match attempts.fetch_add(1, Ordering::Relaxed) {
+                            0 => Err(libloading::Error::DlSymUnknown),
+                            _ => Ok(7),
+                        })
+                    })
+                })
+                .collect();
+            let successes: Vec<_> = callers
+                .into_iter()
+                .filter_map(|caller| caller.join().unwrap().ok())
+                .collect();
+            assert_eq!(successes.len(), 7);
+            assert!(successes.iter().all(|api| std::ptr::eq(*api, successes[0])));
+        });
+        assert_eq!(attempts.into_inner(), 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot dlopen")]
     fn a_missing_library_is_a_load_error_and_tried_again() {
-        static SLOT: Mutex<Loaded<u8>> = Mutex::new(Loaded::Nothing);
-        let missing = ["/nonexistent/libprysm-test.so"];
+        // SAFETY: the test names a nonexistent absolute path.
+        static SLOT: VendorLibrary<u8> =
+            unsafe { VendorLibrary::new(&["/nonexistent/libprysm-test.so"]) };
         for _ in 0..2 {
-            let error = load_once(&SLOT, &missing, |_| Ok(1)).err().unwrap();
+            let error = SLOT.load(|_| Ok(1)).unwrap_err();
             assert!(matches!(error, Error::Load { .. }), "{error}");
-            assert!(matches!(*SLOT.lock().unwrap(), Loaded::Nothing));
+            assert!(SLOT.handle.get().is_none());
         }
     }
 }

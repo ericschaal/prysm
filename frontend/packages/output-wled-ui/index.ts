@@ -22,6 +22,7 @@ export {
 export const wledOutput: AdapterUi<WledSettings> = {
   label: 'WLED',
   create: () => ({ kind: 'wled', address: '', leds: {} }),
+  readDefaults: { leds: ledEdges({}) },
   optional: { dither: true },
   Editor: WledEditor,
   normalize: (value) => ({

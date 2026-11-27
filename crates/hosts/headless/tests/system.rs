@@ -372,26 +372,24 @@ fn wled_settings(wled: &FakeWled) -> Value {
     })
 }
 
-const LIVE: &str = r#"{"on":true,"lor":0,"live":true,"tt":0}"#;
-const OFF: &str = r#"{"live":false,"on":false,"lor":2,"tt":0}"#;
-const NATIVE: &str = r#"{"live":false,"on":true,"lor":2,"tt":0}"#;
+const LIVE: &str = r#"{"on":true,"lor":0,"tt":0}"#;
+const OFF: &str = r#"{"live":false,"on":false,"tt":0}"#;
 
 fn body(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
-/// Frames from the TV reach the LEDs; on SIGTERM WLED is off.
+/// `--start` requests Screen sync during startup reconciliation. Explicit Off powers WLED off.
 #[test]
-fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
+fn cli_start_streams_and_explicit_off_releases_wled() {
     let _wled = wled_lock();
     let wled = FakeWled::start(false);
     let dir = tempfile::tempdir().unwrap();
-    let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
+    let path = write_settings(dir.path(), &wled_settings(&wled));
+    let mut host = Host::spawn(BINARY, &[&path, "--listen", "127.0.0.1:0", "--start"]);
+    let port = host.portal_port();
     let sender = TvSender::plain(port, 0, RED);
-
-    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
-    // The output opens at the first frame.
     assert_eq!(wled.next_state(), body(LIVE));
     wled.expect_colour(RED);
     wait_for_state(port, "screen_sync", |state| session(state) == "screen_sync");
@@ -403,9 +401,18 @@ fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
         LEDS.iter().sum::<usize>()
     );
 
+    assert_eq!(put_target(port, "off", None).status, 204);
+    let release = wled.expect_state(&body(OFF));
+    assert!(
+        release
+            .iter()
+            .all(|request| request == &json!({"live": false}))
+    );
+    wait_for_state(port, "off", |state| {
+        session(state) == "stopped" && state["control"]["busy"] == false
+    });
     let (status, stderr) = host.terminate();
     assert!(status.success(), "{stderr:#?}");
-    assert_eq!(wled.next_state(), body(OFF));
 }
 
 /// Turning dithering off and on again while the lights follow the TV: each
@@ -446,10 +453,10 @@ fn dithering_changes_while_lighting_runs() {
     assert!(status.success(), "{stderr:#?}");
 }
 
-/// When the TV stops sending, the lights go back to WLED's own state after
-/// the grace period, and return to live colours when it sends again.
+/// A disconnected sender does not terminate the remote capture handle.
+/// Another sender can resume DDP through the same session.
 #[test]
-fn a_dropped_sender_releases_wled_to_its_own_state() {
+fn a_dropped_sender_can_resume_through_the_same_screen_sync_session() {
     let _wled = wled_lock();
     let wled = FakeWled::start(false);
     let dir = tempfile::tempdir().unwrap();
@@ -461,16 +468,22 @@ fn a_dropped_sender_releases_wled_to_its_own_state() {
     wled.expect_colour(RED);
 
     drop(sender);
-    // After the session's three-second grace without frames.
-    wled.expect_state(&body(NATIVE));
-    let state = state(port);
+    let state = wait_for_state(port, "capture waiting for another sender", |state| {
+        state["input"]["picture"] == "quiet"
+    });
     assert_eq!(session(&state), "screen_sync", "{state:#}");
     assert_eq!(state["session"]["failure"], Value::Null);
 
     let sender = TvSender::plain(port, 0, BLUE);
     sender.expect("connected");
-    wled.expect_state(&body(LIVE));
     wled.expect_colour(BLUE);
+    assert!(
+        !wled
+            .calls
+            .try_iter()
+            .any(|call| matches!(call, Call::State(_)))
+    );
+    drop(sender);
     let (status, stderr) = host.terminate();
     assert!(status.success(), "{stderr:#?}");
 }
@@ -513,9 +526,7 @@ fn a_wled_error_is_a_typed_output_failure() {
     let wled = FakeWled::start(true);
     let dir = tempfile::tempdir().unwrap();
     let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
-    let sender = TvSender::plain(port, 0, RED);
     assert_eq!(put_target(port, "screen_sync", None).status, 204);
-    sender.expect("connected");
 
     let state = wait_for_state(port, "failed", |state| {
         !state["session"]["failure"].is_null()
@@ -526,22 +537,16 @@ fn a_wled_error_is_a_typed_output_failure() {
     let message = failure["message"].as_str().unwrap();
     assert!(message.contains("did not switch to live mode"), "{message}");
     assert!(message.contains(&wled.address()), "{message}");
-    assert_eq!(state["target"], "screen_sync");
+    assert_eq!(state["target"], "off");
     assert_eq!(session(&state), "stopped");
-    drop(sender);
     let (status, stderr) = host.terminate();
     assert!(status.success(), "{stderr:#?}");
 }
 
-/// A start from WLED's own effects that failed leaves the session `effects`
-/// with the target `screen_sync`; a settings save then retries the start
-/// instead of clearing the failure and leaving the card "starting" (the
-/// engine fix in ef7c4be, which the portal's null output cannot reach).
-///
-/// The start fails as it opens the source: a file source with no FFmpeg on
-/// `PATH` (the host runs with an empty one). The save switches to the TV.
+/// A blocked capture clears the On request. Fixing the capture settings
+/// permits a fresh Screen sync request.
 #[test]
-fn a_save_after_a_failed_start_from_effects_retries() {
+fn fixing_blocked_capture_settings_permits_a_fresh_start() {
     let _wled = wled_lock();
     let wled = FakeWled::start(false);
     let dir = tempfile::tempdir().unwrap();
@@ -555,32 +560,33 @@ fn a_save_after_a_failed_start_from_effects_retries() {
     let port = host.portal_port();
 
     assert_eq!(put_target(port, "effects", None).status, 204);
-    wled.expect_state(&body(NATIVE));
     wait_for_state(port, "effects", |state| session(state) == "effects");
 
     put_target(port, "screen_sync", None);
-    let failed = wait_for_state(port, "failed from effects", |state| {
-        !state["session"]["failure"].is_null()
+    let failed = wait_for_state(port, "blocked capture after cleanup", |state| {
+        state["target"] == "off"
+            && state["control"]["busy"] == false
+            && !state["session"]["failure"].is_null()
     });
-    assert_eq!(failed["target"], "screen_sync", "{failed:#}");
-    assert_eq!(session(&failed), "effects", "{failed:#}");
+    assert_eq!(failed["target"], "off", "{failed:#}");
+    assert_eq!(session(&failed), "stopped", "{failed:#}");
     assert_eq!(
         failed["session"]["failure"]["section"], "capture",
         "{failed:#}"
     );
 
-    // The save retries the start, now with the TV streaming.
-    let sender = TvSender::plain(port, 0, RED);
     let mut changed = failed["settings"].clone();
     changed["capture"] = remote_capture();
     let saved = save_settings(port, &failed, &changed);
     assert_eq!(saved.status, 200, "{}", saved.body);
-    let state = wait_for_state(port, "screen sync, or stuck starting", |state| {
-        session(state) == "screen_sync" || state["session"]["failure"].is_null()
+    let ready = wait_for_state(port, "capture rechecked", |state| {
+        state["session"]["failure"].is_null()
     });
-    assert_eq!(state["session"]["failure"], Value::Null, "{state:#}");
-    let state = wait_for_state(port, "screen_sync", |state| session(state) == "screen_sync");
-    assert_eq!(state["target"], "screen_sync");
+    assert_eq!(ready["target"], "off");
+    assert_eq!(session(&ready), "stopped");
+
+    let sender = TvSender::plain(port, 0, RED);
+    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
     wled.expect_state(&body(LIVE));
     wled.expect_colour(RED);
@@ -630,7 +636,6 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
     let state = wait_for_state(port, "failed", |state| {
         !state["session"]["failure"].is_null()
     });
-    // The settings' problem as a whole: `invalid`, no field, no section.
     assert_eq!(state["session"]["failure"]["kind"], "invalid", "{state:#}");
     assert!(
         state["session"]["failure"].get("field").is_none(),
@@ -653,7 +658,12 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
     let aside: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path != &corrupt)
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("corrupt.json.unreadable-")
+        })
         .collect();
     assert_eq!(aside.len(), 1, "{aside:?}");
     assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "{ not json");
@@ -669,7 +679,6 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
         std::fs::read_to_string(&invalid).unwrap(),
         r#"{"format":1,"output":{"kind":"bogus"}}"#
     );
-    // Fixed through the portal.
     let fixed = json!({ "output": { "kind": "null" } });
     let saved = save_settings(port, &state, &fixed);
     assert_eq!(saved.status, 200, "{}", saved.body);

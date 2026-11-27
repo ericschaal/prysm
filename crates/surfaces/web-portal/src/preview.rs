@@ -2,38 +2,28 @@
 //! latest processed frame and its sampled viewport. The LED colors have their
 //! own stream (`colors.rs`).
 //!
-//! Demand-driven: each open stream holds a [`PreviewWatch`], so the session
+//! Demand-driven: each open stream holds a [`prysm_runtime::PreviewWatch`], so the session
 //! publishes previews only while somebody watches, and a frame is encoded only
 //! when a stream is due to send it. Encoding runs on the blocking pool; one
 //! encoded event is shared by every viewer of the same frame.
-use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
+use crate::sampled::Events;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
-use futures::stream;
-use hyper::{StatusCode, body::Frame as BodyFrame};
 use image::ExtendedColorType;
 use image::codecs::jpeg::JpegEncoder;
 use prysm_core::{Frame, Viewport};
-use prysm_protocol::{Failure, PreviewEvent, PreviewFrame, PreviewViewport};
-use prysm_runtime::{EngineHandle, Preview, PreviewWatch, Shutdown};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::{Instant, sleep_until};
-
-/// Concurrent preview streams; more are refused with `429`.
-const VIEWERS: usize = 4;
-/// At most one event per stream per period: 8 per second.
-pub(crate) const CADENCE: Duration = Duration::from_millis(125);
+use prysm_protocol::{PreviewEvent, PreviewFrame, PreviewViewport};
+use prysm_runtime::Preview;
+use std::sync::{Mutex, PoisonError};
 /// The JPEG's longer side, at most; smaller frames are not enlarged.
 const LONGEST_SIDE: u32 = 480;
 const QUALITY: u8 = 75;
 
-/// The viewer limit and the latest encoded event, shared by all streams.
+/// The latest encoded preview shared by all viewers.
+#[derive(Default)]
 pub(crate) struct Previews {
-    viewers: Arc<Semaphore>,
-    encoded: Arc<Mutex<Option<Encoded>>>,
+    encoded: Mutex<Option<Encoded>>,
 }
 
 /// One preview's event, encoded once for every viewer.
@@ -42,102 +32,19 @@ struct Encoded {
     event: Bytes,
 }
 
-impl Previews {
-    pub(crate) fn new() -> Self {
-        Self {
-            viewers: Arc::new(Semaphore::new(VIEWERS)),
-            encoded: Arc::default(),
-        }
+impl Events for Previews {
+    type Sample = Preview;
+    type Key = u64;
+
+    fn key(&self, preview: &Preview) -> u64 {
+        preview.sequence
     }
 
-    /// `200 text/event-stream` until the client leaves or the portal shuts
-    /// down; `429 busy` beyond the viewer limit.
-    pub(crate) fn stream(&self, engine: &EngineHandle, shutdown: &Shutdown) -> Response {
-        let Ok(permit) = self.viewers.clone().try_acquire_owned() else {
-            return failure(
-                StatusCode::TOO_MANY_REQUESTS,
-                Failure::Busy {
-                    message: "too many preview viewers".into(),
-                },
-            );
-        };
-        let now = Instant::now();
-        let viewer = Viewer {
-            watch: engine.preview(),
-            encoded: self.encoded.clone(),
-            due: now,
-            shown: Shown::Starting,
-            sent: now,
-            _permit: permit,
-        };
-        response::event_stream(stream::unfold(viewer, Viewer::next), shutdown)
-    }
-}
-
-#[derive(PartialEq, Eq)]
-enum Shown {
-    /// Just opened: the session starts publishing only once this stream
-    /// registered, so the first tick may precede the first preview.
-    Starting,
-    Nothing,
-    Idle,
-    Sequence(u64),
-}
-
-/// One open stream. Holds at most one preview and one encoded event.
-struct Viewer {
-    watch: PreviewWatch,
-    encoded: Arc<Mutex<Option<Encoded>>>,
-    /// The earliest the stream looks at the feed again.
-    due: Instant,
-    shown: Shown,
-    /// When the last event or keepalive went out.
-    sent: Instant,
-    _permit: OwnedSemaphorePermit,
-}
-
-impl Viewer {
-    /// The next event, at most one per [`CADENCE`]; between them the stream
-    /// sleeps until the preview changes (or a keepalive is due). The body is
-    /// pulled only after the previous event was written, so a slow reader
-    /// gets fewer frames instead of a queue.
-    async fn next(mut self) -> Option<(BodyFrame<Bytes>, Self)> {
-        loop {
-            // At most one look per period, whatever wakes the stream.
-            sleep_until(self.due).await;
-            self.due = Instant::now() + CADENCE;
-            let event = match self.watch.latest() {
-                None if self.shown == Shown::Idle => None,
-                None if self.shown == Shown::Starting => {
-                    self.shown = Shown::Nothing;
-                    None
-                }
-                None => {
-                    self.shown = Shown::Idle;
-                    Some(sse(&PreviewEvent::Idle))
-                }
-                Some(preview) if self.shown == Shown::Sequence(preview.sequence) => None,
-                Some(preview) => {
-                    self.shown = Shown::Sequence(preview.sequence);
-                    Some(self.encode(preview).await)
-                }
-            };
-            let event = match event {
-                Some(event) => event,
-                // Just opened, with nothing yet: look once more a period on.
-                None if self.shown == Shown::Nothing => continue,
-                None => tokio::select! {
-                    () = self.watch.changed() => continue,
-                    () = sleep_until(self.sent + KEEPALIVE) => KEEPALIVE_COMMENT,
-                },
-            };
-            self.sent = Instant::now();
-            return Some((BodyFrame::data(event), self));
-        }
+    fn idle(&self) -> Bytes {
+        sse(&PreviewEvent::Idle)
     }
 
-    /// The event for `preview`, encoded once for every viewer.
-    async fn encode(&self, preview: Preview) -> Bytes {
+    async fn encode(&self, preview: Preview, _: &u64) -> Bytes {
         let sequence = preview.sequence;
         if let Some(cached) = &*lock(&self.encoded)
             && cached.sequence == sequence

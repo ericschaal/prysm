@@ -8,10 +8,9 @@
 //!
 //! | Key | Effect |
 //! | --- | --- |
-//! | `s` | target screen sync |
-//! | `e` | target effects (the lights' own) |
-//! | `o` | target off |
-//! | `:` | command bar: `on` or `screen_sync`, `effects`, `off`, `load <path>`, `quit`; Enter runs, Esc cancels |
+//! | `p` | Power: turn off or resume the remembered mode |
+//! | `s` and `e` | choose Screen sync or Effects while on, if the output supports both |
+//! | `:` | command bar: `power`, `load <path>`, `quit`; Enter runs, Esc cancels |
 //! | `q`, Esc, Ctrl-C, Ctrl-D | quit |
 //!
 //! `load <path>` replaces all settings with a settings file at the revision
@@ -115,7 +114,7 @@ impl Tui {
         let (commands, mut queued) = mpsc::channel(QUEUED_COMMANDS);
         let (notify, notices) = std_mpsc::channel();
         let mut screen = ScreenThread::spawn(Feed {
-            snapshot: engine.snapshot(),
+            engine: engine.clone(),
             preview: engine.preview(),
             commands,
             notices,
@@ -203,7 +202,6 @@ mod tests {
         let log = CallLog::new();
         let tui = unread();
         let quit = tui.quit();
-        // Never taken: the host keeps writing to stderr.
         let terminal = tui.terminal.subscribe();
         let mut settings = fakes::settings();
         settings.output = Some(prysm_ports::AdapterSettings::new(
@@ -220,7 +218,6 @@ mod tests {
             .surface(tui)
             .surface(move |engine: EngineHandle, shutdown: Shutdown| async move {
                 let mut snapshot = engine.snapshot();
-                // Lighting runs with the terminal's failure reported.
                 let failed = snapshot
                     .wait_for(|s| {
                         !s.surface_failures.is_empty()
@@ -242,7 +239,6 @@ mod tests {
         let message = message.unwrap();
         assert!(message.contains("interactive terminal"), "{message}");
         assert!(!*terminal.borrow());
-        // The failed surface never reports a quit.
         let quit = tokio::time::timeout(Duration::from_millis(20), quit.requested()).await;
         assert!(quit.is_err());
     }

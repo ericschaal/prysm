@@ -57,7 +57,6 @@ async fn construction_rejects_bad_assets_and_origins() {
         ]));
         assert_eq!(field(portal(assets, Access::SameOrigin)), "portal.assets");
     }
-    // The page carries the current state: it is never stored.
     let assets: &'static [FrontendAsset] = Box::leak(Box::new([FrontendAsset {
         caching: Caching::Revalidate,
         ..ASSETS[0].clone()
@@ -78,7 +77,6 @@ async fn asset_serving_and_unauthenticated_api() {
             page.headers()[header::CONTENT_TYPE],
             "text/html; charset=utf-8"
         );
-        // The page carries the current state, so it is never stored.
         assert_secure(&page);
         assert!(!page.headers().contains_key(header::VARY));
         let page = page.text().await.unwrap();
@@ -92,7 +90,6 @@ async fn asset_serving_and_unauthenticated_api() {
         let named = client.get(url("/index.html")).send().await.unwrap();
         assert_secure(&named);
         assert_eq!(named.text().await.unwrap(), page);
-        // A script named by its hash is kept for good, compressed or not.
         let kept = "public, max-age=31536000, immutable";
         let script = client.get(url("/assets/app.js")).send().await.unwrap();
         assert_eq!(script.headers()[header::CONTENT_TYPE], "text/javascript");
@@ -121,7 +118,6 @@ async fn asset_serving_and_unauthenticated_api() {
             assert!(!script.headers().contains_key(header::CONTENT_ENCODING));
             assert_eq!(script.text().await.unwrap(), "console.log('prysm')");
         }
-        // HEAD answers as GET does, without the body: is this file served?
         let head = client.head(url("/assets/app.js")).send().await.unwrap();
         assert_eq!(head.status(), StatusCode::OK);
         assert_eq!(head.headers()[header::CONTENT_LENGTH], "20");
@@ -132,7 +128,6 @@ async fn asset_serving_and_unauthenticated_api() {
         let missing = client.get(url("/missing")).send().await.unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_secure(&missing);
-        // Any Host is served: the portal is reached by IP or LAN name.
         let named = client
             .get(url("/api/v1/state"))
             .header(header::HOST, "prysm.lan:8787")
@@ -143,22 +138,38 @@ async fn asset_serving_and_unauthenticated_api() {
         assert_eq!(named.headers()[header::VARY], "origin");
         assert_secure(&named);
 
-        let unknown = portal
-            .request(Method::GET, "/api/v1/nothing")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
-        let method = portal
-            .request(Method::POST, "/api/v1/target")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(method.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(
-            method.json::<Value>().await.unwrap()["kind"],
-            "method_not_allowed"
-        );
+        for path in [
+            "/api/v1/state",
+            "/api/v1/state/stream",
+            "/api/v1/preview/stream",
+            "/api/v1/colors/stream",
+            "/api/v1/target",
+            "/api/v1/calibration",
+            "/api/v1/processing/trial",
+            "/api/v1/settings",
+            "/api/v1/capture/modes",
+            "/api/v1/candidates/capture/fake",
+        ] {
+            let reply = portal.request(Method::PATCH, path).send().await.unwrap();
+            assert_eq!(reply.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
+            assert_eq!(
+                reply.json::<Value>().await.unwrap()["kind"],
+                "method_not_allowed"
+            );
+        }
+        for path in [
+            "/api/v1/nothing",
+            "/metrics",
+            "/api/v1/capture/stream",
+            "/api/v1/candidates/output/",
+            "/api/v1/candidates/output/fake/more",
+            "/api/v1/candidates/processing/fake",
+        ] {
+            for method in [Method::GET, Method::PATCH] {
+                let reply = portal.request(method, path).send().await.unwrap();
+                assert_eq!(reply.status(), StatusCode::NOT_FOUND, "{path}");
+            }
+        }
         portal.shutdown().await.unwrap();
     })
     .await;
@@ -179,9 +190,19 @@ async fn faulted_engine_is_unavailable() {
         };
         let portal = start(slow_close, Duration::from_millis(50)).await;
         assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
-        let (status, body) = portal.target("off").await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body["kind"], "faulted");
+        portal
+            .engine
+            .snapshot()
+            .wait_for(|snapshot| matches!(snapshot.session, prysm_ports::SessionState::ScreenSync))
+            .await
+            .unwrap();
+        assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
+        portal
+            .engine
+            .snapshot()
+            .wait_for(|snapshot| matches!(snapshot.session, prysm_ports::SessionState::Faulted(_)))
+            .await
+            .unwrap();
         let (status, body) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["kind"], "faulted");
@@ -190,7 +211,6 @@ async fn faulted_engine_is_unavailable() {
             state["session"],
             json!({ "state": "faulted", "message": "The video source did not close in time." })
         );
-        // A faulted engine cannot shut down cleanly; the portal still stops.
         assert!(portal.shutdown().await.is_err());
     })
     .await;

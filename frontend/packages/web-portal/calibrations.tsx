@@ -1,25 +1,20 @@
 import { useEffect } from 'react';
-import type {
-  Calibration,
-  CorrectionControls,
-  Processing,
-} from '@prysm/contracts/application';
-import { CheckboxField, FieldMessage, NameField, RangeField } from './fields';
+import type { Calibration } from '@prysm/contracts/application';
+import { WhiteSliders, PrimarySliders } from './correction-sliders';
+import { CheckboxField, FieldMessage, NameField } from './fields';
 import { FieldScopeProvider } from './form';
-import { useLiveProcessing, withCalibrations } from './live-processing';
 import {
-  correctionLimits,
-  corrections,
+  editCalibration,
+  type ProcessingEditor,
+  withCalibrations,
+} from './live-processing';
+import {
   noCorrection,
   calibrationLimits,
   primaries,
-  primaryLimits,
-  signed,
-  endsLabel,
-  strengthEnds,
 } from './calibration-model';
+import { useNav, usePortal } from './portal-context';
 import { Group, RowLink, RowSwitch } from './rows';
-import { useSaveReport } from './save-state';
 
 /** How long a deleted calibration can be brought back. */
 export const undoForMs = 5000;
@@ -32,48 +27,15 @@ export interface DeletedCalibration {
   undoable: boolean;
 }
 
-interface LiveProps {
-  processing: Processing;
-  revision: number;
-  disabled: boolean;
-  /** Save the whole processing section against `expected`. */
-  save: (expected: number, processing: Processing) => Promise<number>;
-  /** Light with a processing section unsaved, while a slider is held. */
-  tryProcessing: (processing: Processing) => Promise<unknown>;
-}
-
-/** The processing section saved live, reported to the page's save status. */
-function useCalibrations(props: LiveProps) {
-  const live = useLiveProcessing(props);
-  useSaveReport('calibrations', live.state);
-  return live;
-}
-
 /**
  * The calibrations as rows: each opens its own page; one deleted there
  * keeps its place here with Undo for a few seconds, so nothing moves. A new
  * one comes from the Calibrate page.
  */
-export function CalibrationList({
-  deleted,
-  setDeleted,
-  open,
-  calibrate,
-  ...props
-}: LiveProps & {
-  /** Deleted on this visit, by id; kept by the portal across pages. */
-  deleted: Record<string, DeletedCalibration>;
-  setDeleted: (
-    change: (
-      deleted: Record<string, DeletedCalibration>,
-    ) => Record<string, DeletedCalibration>,
-  ) => void;
-  /** Open a calibration's page. */
-  open: (id: string) => void;
-  /** Make a new calibration on the Calibrate page. */
-  calibrate: () => void;
-}) {
-  const live = useCalibrations(props);
+export function CalibrationList({ live }: { live: ProcessingEditor }) {
+  const { deletedCalibrations: deleted, setDeletedCalibrations: setDeleted } =
+    usePortal();
+  const { go } = useNav();
   const calibrations = live.value.calibrations ?? [];
   const active = live.value.active_calibration;
   const full = calibrations.length >= calibrationLimits.count;
@@ -95,7 +57,6 @@ export function CalibrationList({
       'processing.calibrations',
     );
   }
-  // Undo is offered for a while; the row then just says it was deleted.
   const undoable = Object.values(deleted).filter((gone) => gone.undoable);
   useEffect(() => {
     if (!undoable.length) return;
@@ -143,7 +104,7 @@ export function CalibrationList({
                       <button
                         type="button"
                         className="link"
-                        disabled={props.disabled || full}
+                        disabled={live.scope.disabled || full}
                         onClick={() => undo(row.gone)}
                       >
                         Undo
@@ -157,7 +118,7 @@ export function CalibrationList({
                 key={row.calibration.id}
                 label={row.calibration.name}
                 value={row.calibration.id === active ? 'In use' : 'Not in use'}
-                onClick={() => open(row.calibration.id)}
+                onClick={() => go({ calibration: row.calibration.id })}
               />
             ),
           )}
@@ -172,7 +133,7 @@ export function CalibrationList({
               : 'Test patterns on the TV, step by step'
           }
           onClick={() => {
-            if (!full && !props.disabled) calibrate();
+            if (!full && !live.scope.disabled) go('calibrate');
           }}
         />
       </Group>
@@ -186,23 +147,19 @@ export function CalibrationList({
  * balance, red, green and blue, and Delete (back to the list, with Undo there).
  */
 export function CalibrationPage({
+  live,
   id,
-  deleted,
-  leave,
-  ...props
-}: LiveProps & {
+}: {
+  live: ProcessingEditor;
   id: string;
-  /** It was deleted: the list shows it in its place, with Undo. */
-  deleted: (gone: DeletedCalibration) => void;
-  /** Back to the list. */
-  leave: () => void;
 }) {
-  const live = useCalibrations(props);
+  const { setDeletedCalibrations } = usePortal();
+  const nav = useNav();
+  const leave = () => nav.back('calibrations');
   const calibrations = live.value.calibrations ?? [];
   const active = live.value.active_calibration;
-  const index = calibrations.findIndex((calibration) => calibration.id === id);
-  const calibration = calibrations[index];
-  if (!calibration)
+  const editor = editCalibration(live, id);
+  if (!editor)
     return (
       <p className="page-intro">
         This calibration isn’t there any more.{' '}
@@ -211,27 +168,13 @@ export function CalibrationPage({
         </button>
       </p>
     );
-  const path = `processing.calibrations[${index}]`;
-  const correction = calibration.correction;
+  const { calibration, index, path, sliders, update } = editor;
   const inUse = active === id;
-  function update(change: Partial<Calibration>, at: string) {
-    live.slider.slide(
-      withCalibrations(
-        live.value,
-        calibrations.map((item) =>
-          item.id === id ? { ...item, ...change } : item,
-        ),
-        active,
-      ),
-      at,
-    );
-  }
-  function correct(change: Partial<CorrectionControls>, at: string) {
-    update({ correction: { ...correction, ...change } }, at);
-  }
-  const shown = calibration;
   function remove() {
-    deleted({ calibration: shown, index, wasActive: inUse, undoable: true });
+    setDeletedCalibrations((current) => ({
+      ...current,
+      [id]: { calibration, index, wasActive: inUse, undoable: true },
+    }));
     void live.commit(
       withCalibrations(
         live.value,
@@ -242,12 +185,6 @@ export function CalibrationPage({
     );
     leave();
   }
-  const slider = (name: string) => ({
-    path: `${path}.correction.${name}`,
-    onPress: live.slider.press,
-    onRelease: live.slider.release,
-    format: signed,
-  });
   return (
     <FieldScopeProvider value={live.scope}>
       <div className="calibration-page" key={live.generation}>
@@ -257,7 +194,7 @@ export function CalibrationPage({
           help="Saved when you leave the field or press Enter."
           value={calibration.name ?? ''}
           maxChars={calibrationLimits.name}
-          onChange={(name) => update({ name }, `${path}.name`)}
+          onChange={(name) => update({ name }, 'name')}
         />
         <ul className="rows">
           <RowSwitch>
@@ -280,50 +217,13 @@ export function CalibrationPage({
           </RowSwitch>
         </ul>
         <div className="grid">
-          {corrections.map(([name, label, help]) => (
-            <RangeField
-              key={name}
-              label={label}
-              help={help}
-              value={correction[name]}
-              onChange={(value) =>
-                correct({ [name]: value }, `${path}.correction.${name}`)
-              }
-              {...slider(name)}
-              {...correctionLimits[name]}
-            />
-          ))}
+          <WhiteSliders {...sliders} />
         </div>
         {primaries.map((primary) => (
           <fieldset key={primary.name}>
             <legend>{primary.label}</legend>
             <div className="grid">
-              {(
-                [
-                  ['hue', primary.hue],
-                  ['strength', strengthEnds],
-                ] as const
-              ).map(([control, ends]) => (
-                <RangeField
-                  key={control}
-                  label={endsLabel(ends)}
-                  ends={ends}
-                  value={correction[primary.name][control]}
-                  onChange={(value) =>
-                    correct(
-                      {
-                        [primary.name]: {
-                          ...correction[primary.name],
-                          [control]: value,
-                        },
-                      },
-                      `${path}.correction.${primary.name}.${control}`,
-                    )
-                  }
-                  {...slider(`${primary.name}.${control}`)}
-                  {...primaryLimits[control]}
-                />
-              ))}
+              <PrimarySliders {...sliders} primary={primary} />
             </div>
           </fieldset>
         ))}
@@ -331,10 +231,8 @@ export function CalibrationPage({
           <div className="actions">
             <button
               type="button"
-              disabled={props.disabled}
-              onClick={() =>
-                update({ correction: noCorrection }, `${path}.correction`)
-              }
+              disabled={live.scope.disabled}
+              onClick={() => update({ correction: noCorrection }, 'correction')}
             >
               Reset to no correction
             </button>
@@ -342,7 +240,7 @@ export function CalibrationPage({
             <button
               type="button"
               className="danger quiet"
-              disabled={props.disabled}
+              disabled={live.scope.disabled}
               onClick={remove}
             >
               Delete calibration

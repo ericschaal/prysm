@@ -5,15 +5,10 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import {
-  failureOf,
-  type AdapterSide,
-  type PreviewClient,
-} from '@prysm/application-client';
+import { failureOf, type AdapterSide } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
-  kindsOf,
   ledCount,
   refusal,
   type AdapterSection,
@@ -29,9 +24,10 @@ import {
   useFieldErrors,
   useFieldScope,
 } from './form';
+import { useNav, usePortal } from './portal-context';
 import { useLingering } from './lingering';
 import { SectionFields } from './section-step';
-import { sectionStatus, type LiveState } from './section-state';
+import { sectionStatus } from './section-state';
 import { SectionStatus } from './section-status';
 import { stepCopy } from './step-copy';
 
@@ -49,10 +45,7 @@ type Phase =
   | { kind: 'problem'; message: string };
 
 /** The saved section in a few words: `WLED at wled.local · 120 LEDs`. */
-function identityOf<S extends AdapterSection>(
-  adapters: AdapterUis<S>,
-  saved: S | null,
-) {
+function identityOf(adapters: AdapterUis, saved: AdapterSection | null) {
   if (!saved) return null;
   const adapter = adapterFor(adapters, saved.kind);
   const label = adapter?.label ?? saved.kind;
@@ -70,53 +63,25 @@ function identityOf<S extends AdapterSection>(
 const sentence = (words: string) =>
   /[.!?…]$/.test(words) ? words : `${words}.`;
 
-export interface SectionEditorProps<S extends AdapterSection> {
-  section: AdapterSide;
-  adapters: AdapterUis<S>;
-  /** The observed section; `null` while unconfigured. */
-  saved: S | null;
-  revision: number;
-  disabled: boolean;
-  /** Screen sync now, for the status at the top. */
-  live: LiveState;
-  /** Save the section against `expected`; resolves with the new revision. */
-  save: (expected: number, value: S) => Promise<number>;
-  /**
-   * What was saved before the last change made here, kept by the portal so
-   * it is still offered after leaving the page; `null` when there is none.
-   */
-  previous: S | null;
-  setPrevious: (previous: S | null) => void;
-  /** Back to Settings. */
-  leave: () => void;
-  /** The live picture for the video source's status, when this host has one. */
-  preview?: PreviewClient;
-}
-
 /**
  * One section on its own page: whether it works now, the same step as in
  * setup, and a bar at the bottom while there is something to save. After a
  * save the bar stays where the user is and follows the status: starting,
  * then working (and goes), or why it fails with the previous one offered.
  */
-export function SectionEditor<S extends AdapterSection>({
-  section,
-  adapters,
-  saved,
-  revision,
-  disabled,
-  live,
-  save,
-  previous,
-  setPrevious,
-  leave,
-  preview,
-}: SectionEditorProps<S>) {
+export function SectionEditor({ section }: { section: AdapterSide }) {
+  const portal = usePortal();
+  const nav = useNav();
+  const { host, snapshot, online, commands } = portal;
+  const { revision, settings } = snapshot;
+  const saved = settings[section] ?? null;
+  const previous = portal.previous[section];
+  const adapters = section === 'capture' ? host.captures : host.outputs;
   const copy = stepCopy[section];
-  const draft = useDraft<S>({
+  const draft = useDraft<AdapterSection>({
     saved,
     revision,
-    fresh: () => createSection(adapters, kindsOf(adapters)[0] ?? ''),
+    fresh: () => createSection(adapters),
   });
   const errors = useFieldErrors();
   const [phase, setPhase] = useState<Phase>({ kind: 'editing' });
@@ -129,7 +94,7 @@ export function SectionEditor<S extends AdapterSection>({
     if (focus) focusField(formRef.current, focus.field);
   }, [focus]);
   const busy = phase.kind === 'saving' || draft.syncing;
-  const locked = disabled || busy;
+  const locked = !online || busy;
   const scope = useFieldScope(locked, errors, attempted);
   const adapter = adapterFor(adapters, draft.draft.kind);
   const savedUi = saved ? adapterFor(adapters, saved.kind) : undefined;
@@ -140,14 +105,14 @@ export function SectionEditor<S extends AdapterSection>({
   const blocked = Object.keys(errors.local).length > 0;
 
   const stalled = useLingering(
-    live.target === 'screen_sync' && live.path.kind === 'waiting',
+    snapshot.target === 'screen_sync' && portal.path.kind === 'waiting',
     checkForMs,
     0,
   );
   const edges = saved ? savedUi?.edges?.(saved) : undefined;
   const status = sectionStatus(
     section,
-    live,
+    portal,
     identityOf(adapters, saved),
     stalled,
     {
@@ -158,7 +123,6 @@ export function SectionEditor<S extends AdapterSection>({
   const failing = status.tone === 'problem';
   const hint = failing ? savedUi?.trouble : undefined;
 
-  // Working, or not in use: said for a moment, then the bar goes.
   const settled = status.tone === 'ok' || status.tone === 'idle';
   useEffect(() => {
     if (!watching || !settled) return;
@@ -166,24 +130,26 @@ export function SectionEditor<S extends AdapterSection>({
     return () => clearTimeout(timer);
   }, [watching, settled]);
 
-  /** The draft tidied for saving, as its kind asks. */
   const normalized = () => adapter?.normalize?.(draft.draft) ?? draft.draft;
 
-  function change(next: S) {
+  function change(next: AdapterSection) {
     draft.setDraft(next);
     setWatching(false);
     if (phase.kind !== 'editing') setPhase({ kind: 'editing' });
   }
 
   /** Save `value`; `was` is offered back afterwards (`null`: nothing). */
-  async function store(value: S, was: S | null) {
+  async function store(value: AdapterSection, was: AdapterSection | null) {
     setPhase({ kind: 'saving' });
     try {
-      const next = await save(revision, value);
+      const next =
+        section === 'capture'
+          ? await commands.configureCapture(revision, value)
+          : await commands.configureOutput(revision, value);
       draft.setDraft(value);
       draft.saved(value, next);
       setAttempted(false);
-      setPrevious(was);
+      portal.setPrevious({ ...portal.previous, [section]: was });
       setPhase({ kind: 'editing' });
       setWatching(true);
     } catch (error) {
@@ -194,13 +160,11 @@ export function SectionEditor<S extends AdapterSection>({
       }
       const field = reason.kind === 'invalid' ? reason.field : undefined;
       if (field) errors.setServer({ [field]: refusal(adapter, field) });
-      // A field shown now is said by itself and the bar's “Fix” line.
       if (field && showsField(formRef.current, field))
         setPhase({ kind: 'editing' });
       else
         setPhase({
           kind: 'problem',
-          // Without its field: the field is not shown, so it is not named.
           message: saveProblem(
             reason.kind === 'invalid'
               ? { ...reason, field: undefined }
@@ -235,9 +199,6 @@ export function SectionEditor<S extends AdapterSection>({
     void store(normalized(), saved);
   }
 
-  // The bar at the page's end: while there is something to save, and after
-  // a save until it works.
-  // A number typed out of range changes no draft, but is still to be fixed.
   const editing =
     draft.dirty ||
     draft.unconfigured ||
@@ -276,14 +237,18 @@ export function SectionEditor<S extends AdapterSection>({
         </button>
       );
       tone = 'error';
-    } else if (saved && live.target !== 'off')
+    } else if (saved && snapshot.target !== 'off')
       line = 'Saving restarts screen sync.';
     actions = (
       <>
         <button className="primary" type="submit" disabled={locked}>
           {busy ? 'Saving…' : copy.use}
         </button>
-        <button type="button" disabled={busy} onClick={leave}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => nav.back('settings')}
+        >
           Cancel
         </button>
       </>
@@ -326,7 +291,7 @@ export function SectionEditor<S extends AdapterSection>({
       <SectionStatus
         section={section}
         status={status}
-        preview={preview}
+        preview={host.preview}
         hint={hint}
         brief={outcome && failing}
       />

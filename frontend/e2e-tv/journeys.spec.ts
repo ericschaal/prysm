@@ -1,6 +1,3 @@
-// What people do with the remote: change settings, read a long log, calibrate
-// and leave, and the first run of each package. `press` checks focus after
-// every key.
 import { expect, test, type Page } from '@playwright/test';
 import {
   addLights,
@@ -16,7 +13,7 @@ import {
   supervisorState,
 } from './remote';
 
-const start = { full: 'mode-off', slim: 'primary' } as const;
+const start = { full: 'light-power', slim: 'primary' } as const;
 const settingsTop = { full: 'autostart', slim: 'prysm-address' } as const;
 const statusTitle = (page: Page) => page.locator('#status-title');
 
@@ -77,22 +74,41 @@ for (const flavor of ['full', 'slim'] as const) {
   });
 }
 
-test('full: a lighting mode applies with OK and the status follows', async ({
+test('full: Power resumes the last mode and Off hides mode selection', async ({
   page,
 }) => {
-  await openTv(page, 'full', { focus: 'mode-off' });
-  await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
+  await openTv(page, 'full', { focus: 'light-power' });
+  const power = page.locator('#light-power');
+  const modes = page.getByRole('group', { name: 'Lighting mode' });
+  const selection = modes.locator('[id^="mode-"]');
+  await expect(power).toHaveAttribute('aria-pressed', 'false');
+  await expect(selection).toHaveCount(0);
+
+  await press(page, 'Enter');
+  await expect(statusTitle(page)).toHaveText('WLED effects on');
+  expect(await lightingTarget(page)).toBe('effects');
+  await expect(page.locator('#mode-effects')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  await pressUntil(page, 'ArrowRight', 'mode-screen_sync');
   await press(page, 'Enter');
   await expect(statusTitle(page)).toHaveText('Screen sync on');
   await expect(page.locator('#mode-screen_sync')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  expect(await lightingTarget(page)).toBe('screen_sync');
-  await pressUntil(page, 'ArrowRight', 'mode-off');
+
+  await pressUntil(page, 'ArrowLeft', 'light-power');
   await press(page, 'Enter');
   await expect(statusTitle(page)).toHaveText('Lights off');
   expect(await lightingTarget(page)).toBe('off');
+  await expect(selection).toHaveCount(0);
+
+  await press(page, 'Enter');
+  await expect(statusTitle(page)).toHaveText('Screen sync on');
+  expect(await lightingTarget(page)).toBe('screen_sync');
 });
 
 test('slim: the Prysm address row saves a new address', async ({ page }) => {
@@ -130,7 +146,6 @@ for (const flavor of ['full', 'slim'] as const) {
     const row = page.locator('#calibrate');
     await expect(row).toBeEnabled();
     await pressUntil(page, 'ArrowDown', 'calibrate');
-    // Nothing is drawn over a pattern: the screen has no control to focus.
     await press(page, 'Enter', { check: false });
     const screen = page.getByRole('region', { name: 'Calibration' });
     await expect(screen.getByRole('heading')).toHaveText('Calibrate colours');
@@ -167,9 +182,9 @@ test('full first run: set up the service, then the lights from the phone', async
   await expectSizes(page);
   await addLights(page);
   await expect(statusTitle(page)).toHaveText('Lights off');
-  await expect(page.locator('#mode-off')).toHaveAttribute(
+  await expect(page.locator('#light-power')).toHaveAttribute(
     'aria-pressed',
-    'true',
+    'false',
   );
   await expect(page.locator('.setup-qr')).toHaveCount(0);
   await expect(page.locator('#primary')).toHaveCount(0);
@@ -206,7 +221,7 @@ test('slim first run: add the address, then the lights from the phone', async ({
   await expectSizes(page);
   await addLights(page);
   await expect(statusTitle(page)).toHaveText('Capture off');
-  await expect(page.locator('#mode-off')).toBeVisible();
+  await expect(page.locator('#light-power')).toBeVisible();
   await expect(page.locator('#primary')).toHaveText('Start capture');
   await expectFocus(page);
   expect(await supervisorState(page), 'nothing started').toMatchObject({

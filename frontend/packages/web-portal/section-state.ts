@@ -5,18 +5,17 @@ import {
   pictureOf,
   plainFailure,
   REFUSED_VIDEO,
+  situationFailure,
   unreachable,
   unusableSettings,
   type AdapterSide,
-  type LightingFailure,
   type LightingSituation,
   type OutputIssue,
-  type TargetReading,
 } from '@prysm/application-client';
-import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer } from './adapters';
 import { deviceBrightnessNoteBelow } from './light-card-view';
 import type { PathState } from './setup-card';
+import type { Portal } from './portal-context';
 
 /** What the signal path is doing, by what the lights are doing. */
 export function pathOf(lighting: LightingSituation): PathState {
@@ -31,15 +30,7 @@ export function pathOf(lighting: LightingSituation): PathState {
       if (!input) return { kind: 'waiting', picture: 'quiet' };
       const picture = pictureOf(input);
       return picture === 'arriving'
-        ? {
-            kind: 'flowing',
-            fps: input.fps,
-            latency: input.latency && {
-              captureMs: input.latency.capture_ms,
-              outputMs: input.latency.output_ms,
-            },
-            behind: input.behind,
-          }
+        ? { kind: 'flowing', input }
         : { kind: 'waiting', picture };
     }
     case 'effects':
@@ -67,20 +58,6 @@ export function pathOf(lighting: LightingSituation): PathState {
   }
 }
 
-/** What the state says about screen sync now, for a section's status. */
-export interface LiveState {
-  online: boolean;
-  target: TargetReading;
-  path: PathState;
-  /** The failure the lighting situation says (see `situationFailure`). */
-  failure: LightingFailure | null;
-  /** What the lights are doing, decided once (`lightingSituation`). */
-  situation: LightingSituation;
-  input?: Input;
-  /** What the lights say about themselves. */
-  device: DeviceReport;
-}
-
 /** What the saved lights are, beyond their identity. */
 export interface SavedLights {
   /** Their own effects' name, such as `WLED effects`. */
@@ -97,7 +74,6 @@ export interface Status {
   detail: string;
   /** Why it fails, under the line: Prysm's own words where it has any. */
   details?: string;
-  /** Frames are flowing from this source: show them. */
   picture?: boolean;
 }
 
@@ -118,15 +94,21 @@ function issueStatus(issue: OutputIssue, identity: string): Status {
  */
 export function sectionStatus(
   section: AdapterSide,
-  live: LiveState,
+  {
+    online,
+    snapshot,
+    path,
+    lighting: situation,
+  }: Pick<Portal, 'online' | 'snapshot' | 'path' | 'lighting'>,
   identity: string | null,
   stalled: boolean,
   lights: SavedLights = {},
 ): Status {
   const capture = section === 'capture';
   const effects = lights.effects ?? 'Device effects';
-  const { path, failure, target, situation } = live;
-  const outputIssue = live.device.issue;
+  const { target, device } = snapshot;
+  const failure = situationFailure(situation);
+  const outputIssue = device.issue;
   if (identity === null)
     return {
       tone: 'idle',
@@ -135,7 +117,7 @@ export function sectionStatus(
         ? 'Save a source below to start using it.'
         : 'Save the lights below to start using them.',
     };
-  if (!live.online)
+  if (!online)
     return { tone: 'idle', title: 'Waiting for the connection…', detail: '' };
   // A target or session state newer than this page: never "Starting…".
   if (situation.kind === 'unknown')
@@ -144,7 +126,6 @@ export function sectionStatus(
       title: 'Prysm is newer than this page',
       detail: 'Reload it to see what the lights do.',
     };
-  // Why: the fault's own words, else the failure's message.
   const reason =
     situation.kind === 'faulted' ? situation.message : failure?.message;
   // With the lights off, or waited for, nothing runs: a failure is said only
@@ -216,13 +197,13 @@ export function sectionStatus(
       return {
         tone: 'ok',
         title: 'Picture arriving',
-        detail: `${Math.round(path.fps)} fps`,
+        detail: `${Math.round(path.input.fps)} fps`,
         picture: true,
       };
-    const differ = ledCountsDiffer(live.device.led_count, lights.leds);
+    const differ = ledCountsDiffer(device.led_count, lights.leds);
     if (differ)
       return { tone: 'warning', title: 'LED counts differ', detail: differ };
-    const brightness = live.device.brightness_percent;
+    const brightness = device.brightness_percent;
     return {
       tone: 'ok',
       title: 'Showing screen sync',
@@ -232,8 +213,6 @@ export function sectionStatus(
           : identity,
     };
   }
-  // Not a problem, however long it lasts: it ends when the video changes.
-  // The title names the symptom, the detail the reason.
   if (path.kind === 'waiting' && path.picture === 'refused')
     return { tone: 'idle', title: 'No picture', detail: REFUSED_VIDEO };
   if (path.kind === 'waiting' && stalled)

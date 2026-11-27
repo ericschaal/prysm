@@ -2,40 +2,16 @@
 worker's load and soak computed from its readings."""
 
 from collections.abc import Callable, Sequence
-from enum import StrEnum
 from itertools import pairwise
 import time
 from typing import Literal, NotRequired, Protocol, TypedDict, TypeVar
 
 from prysm_acceptance import prysm_api
 from prysm_acceptance.commands import Command
+from prysm_acceptance.wire_generated import Encoding as Encoding  # noqa: PLC0414 -- public runner API
+from prysm_acceptance.wire_generated import Power, Video
 
 CLOCK_TICKS = 100  # USER_HZ on the TV's ARM kernel (assumed; see the report)
-
-
-class Encoding(StrEnum):
-    """How the slim package streams the picture."""
-
-    H264_HARDWARE = 'h264_hardware'
-    H264_SOFTWARE = 'h264_software'
-    RAW = 'raw'
-
-
-class Power(StrEnum):
-    """The TV's power as its state reports it."""
-
-    UNKNOWN = 'unknown'
-    ACTIVE = 'active'
-    SCREEN_SAVER = 'screen_saver'
-    ASLEEP = 'asleep'
-
-
-class Video(StrEnum):
-    """Video on the TV's main output as its state reports it: available only while the power is active."""
-
-    UNKNOWN = 'unknown'
-    UNAVAILABLE = 'unavailable'
-    AVAILABLE = 'available'
 
 
 class StoppedWorker(TypedDict):

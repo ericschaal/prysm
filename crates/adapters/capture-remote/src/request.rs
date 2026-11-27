@@ -143,7 +143,6 @@ mod tests {
         ] {
             assert_eq!(bad.validate().unwrap_err().field, field, "{bad:?}");
         }
-        // Sizes encoders refuse are the sender's offer's to refuse.
         RemoteSettings {
             width: 8,
             height: 2,
@@ -197,7 +196,6 @@ mod schema_tests {
             assert_eq!(schema["properties"][field]["default"], default, "{field}");
             assert_eq!(serde_json::to_value(settings).unwrap()[field], default);
         }
-        // The schema's bounds are the protocol's.
         for (field, maximum) in [
             ("width", crate::wire::MAX_WIDTH),
             ("height", crate::wire::MAX_HEIGHT),

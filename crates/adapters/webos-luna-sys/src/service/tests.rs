@@ -119,14 +119,11 @@ fn requests_replies_and_polls_reach_the_handler_and_teardown_is_ordered() {
     ]
     .map(|call| index(&calls, call));
     assert!(channel.is_sorted(), "{calls:#?}");
-    // The first poll is due at once, inside the loop.
     assert!(index(&calls, "timer 0") < index(&calls, "run"));
-    // Subscribe, then reply, then the deferred publish.
     let subscribed = index(&calls, "subscribe");
     let replied = index(&calls, r#"reply {"returnValue":true}"#);
     let published = index(&calls, r#"publish /getState {"n":1}"#);
     assert!(subscribed < replied && replied < published);
-    // The oversized payload got an error reply without reaching the handler.
     assert!(
         calls
             .iter()
@@ -134,7 +131,6 @@ fn requests_replies_and_polls_reach_the_handler_and_teardown_is_ordered() {
                 && c.contains(r#""refusal":"TooLarge""#)
                 && c.contains("exceeds"))
     );
-    // The recall cancelled call 2 and made it again.
     let cancelled = index(&calls, "cancel 2");
     assert_eq!(calls[cancelled + 3], "call luna://video/get");
     // Teardown: the watch, both calls, unregister, then the GLib references.
@@ -296,7 +292,6 @@ fn the_handler_polls_when_due_woken_or_called() {
     let wake = Wake::new().unwrap();
     let waker = wake.waker();
     let counted = polls.clone();
-    // The first poll's renewal brings a reply while that poll runs.
     mock::on_cancel(|| mock::invoke_call(0, "{}"));
     mock::on_run(move || {
         assert!(!mock::invoke_timer(), "the first poll");
@@ -315,7 +310,6 @@ fn the_handler_polls_when_due_woken_or_called() {
         assert!(!mock::invoke_timer());
         assert_eq!(counted.get(), 4);
         assert!(!mock::armed());
-        // A request is answered before the poll that may end the loop.
         mock::invoke_method(&mut FakeMessage::new("getState", "app", "{}"));
         assert_eq!(counted.get(), 4);
         assert!(mock::invoke_timer(), "stopped");

@@ -316,13 +316,9 @@ mod tests {
                 )
                 .await
             });
-            // Accept 1 serves the first connection; accept 2 meets EMFILE,
-            // which the loop handles in the poll that got it.
             calls.recv().await.unwrap();
             served.recv().await.unwrap();
             calls.recv().await.unwrap();
-            // Exhausted: another connection waits, and the loop runs once
-            // more without accepting it.
             holding.store(true, Ordering::SeqCst);
             script.send(Ok(second)).unwrap();
             tokio::task::yield_now().await;

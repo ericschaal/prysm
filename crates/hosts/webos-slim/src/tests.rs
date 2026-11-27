@@ -98,7 +98,7 @@ fn start<S: Upstream + 'static>(
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
     let sink = sink.retry_every(Duration::from_millis(20));
-    let source = RequestedCapture::new(flow.clone(), StopHandle::default(), {
+    let source = RequestedCapture::new(flow.clone(), StopHandle::default(), feed.clone(), {
         let opened = opened.clone();
         move |shape| opened.open(shape)
     });
@@ -128,7 +128,7 @@ fn status(event: &Event) -> Option<&SlimStatus> {
     match event {
         Event::Status(WorkerStatus::Slim(status)) => Some(status),
         Event::Status(WorkerStatus::Full(status)) => panic!("a full status: {status:?}"),
-        Event::Failed(_) => None,
+        Event::Failed(_) | Event::Initialized {} => None,
     }
 }
 
@@ -242,8 +242,6 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
     let (mut peer, _feed, task) = start(&opened, {
         let (log, attempts) = (log.clone(), attempts.clone());
         move || {
-            // Refused three times, then a receiver that drops after 5 frames,
-            // then one that stays.
             let attempt = attempts.fetch_add(1, Ordering::SeqCst);
             match attempt {
                 0..=2 => Err(Error::other("cannot connect to receiver: refused")),
@@ -259,16 +257,13 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
         waiting(&event),
         Some("waiting for the receiver: cannot connect to receiver: refused")
     );
-    // Connected: frames flow and no wait is reported.
     peer.wait_for("a capturing status that is sending", |e| {
         capturing(e) == Some(true) && sending(e)
     })
     .await;
-    // The first receiver drops after 5 frames; the uplink reconnects.
     assert!(log.wait_for("sink.send", 20).await);
     assert!(attempts.load(Ordering::SeqCst) >= 5);
     assert!(!task.is_finished(), "the worker keeps running throughout");
-    // The capture opened once, at the requested shape, and stayed open.
     assert_eq!(opened.shapes(), [settings(&RAW)]);
 
     peer.close();
@@ -481,12 +476,10 @@ async fn reports_frame_flow_and_forwards_video_commands() {
     );
     peer.wait_for("a capturing status", |e| capturing(e) == Some(true))
         .await;
-    // The fake goes quiet after 40 frames.
     peer.wait_for("a status that is not capturing", |e| {
         capturing(e) == Some(false)
     })
     .await;
-    // Heartbeat repeats the unchanged status.
     let again = peer.event().await.unwrap();
     assert_eq!(capturing(&again), Some(false));
 
@@ -586,21 +579,16 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
         (64, 32, prysm_h264::FORMAT)
     );
 
-    // While frames go out, the rate is reported.
     peer.wait_for(
         "a status sending frames",
         |e| matches!(link(e), Some(SlimLink::Sending { fps, .. }) if *fps > 0),
     )
     .await;
 
-    // Lighting off: the receiver closes the stream as stopped. Paused, not a
-    // failure; the TV capture stops (and stays stopped while the worker
-    // keeps reconnecting: `link::tests::every_uplink_state_takes_every_event`).
     Box::new(receiver).close().unwrap();
     peer.wait_for("a paused status", paused).await;
     assert!(released(&opened).await, "the capture stops while stopped");
     assert_eq!(opened.shapes().len(), 1, "no capture while lighting is off");
-    // Lighting on again: a new connection resumes the capture.
     let receiver = portal.source(SOFTWARE);
     peer.wait_for("a capturing status that is sending", |e| {
         capturing(e) == Some(true) && sending(e)
@@ -689,7 +677,6 @@ async fn a_version_mismatch_replaces_a_stopped_stream() {
     tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
         .await
         .unwrap();
-    // The capture stays released: nothing can be sent to that Prysm.
     peer.wait_for("a version mismatch without capture", |e| {
         version_differs(e).is_some() && capturing(e) == Some(false)
     })
@@ -853,7 +840,6 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
     })
     .await
     .unwrap();
-    // The desktop sees an invalid `capture.encoding` with the TV's reason.
     let Error::Invalid(invalid) = &error else {
         panic!("{error:?}");
     };
@@ -866,7 +852,6 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
         invalid.reason
     );
 
-    // Still the encoder failure while the receiver is away.
     peer.wait_for("an encoder failure", |e| encoder_failure(e).is_some())
         .await;
     peer.close();
@@ -890,14 +875,11 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
                 ..RAW
             };
             Ok(match attempt {
-                // The encoder fails at the first frame.
                 0 => Fake {
                     encoder: true,
                     ..Fake::new(&log, hardware, 0)
                 },
-                // The same request again: refused before any frame.
                 1..=5 => Fake::new(&log, hardware, u32::MAX),
-                // Software instead.
                 _ => Fake::new(
                     &log,
                     RemoteSettings {
@@ -924,8 +906,6 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
         .collect();
     assert_eq!(refusals.len(), 5, "{refusals:?}");
     assert!(refusals.iter().all(|r| r.contains("no encoder here")));
-    // The capture closed while the request was refused and opened again
-    // for the new one.
     assert_eq!(opened.shapes(), [settings(&RAW); 2]);
     peer.close();
     let (result, _) = task.await.unwrap();
@@ -954,7 +934,6 @@ fn a_version_mismatch_outlasts_an_unreachable_receiver() {
     let mut uplink = uplink.retry_every(Duration::ZERO);
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(RAW));
-    // The receiver drops; Prysm comes back updated, then goes away.
     uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), None);
@@ -993,7 +972,7 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
     let mut uplink = uplink.retry_every(Duration::ZERO);
     let stop = StopHandle::default();
     let opened = Arc::new(Mutex::new(Vec::new()));
-    let mut source = RequestedCapture::new(flow.clone(), stop.clone(), {
+    let mut source = RequestedCapture::new(flow.clone(), stop.clone(), VideoSignal::default(), {
         let (opened, stop) = (opened.clone(), stop.clone());
         move |shape| {
             opened.lock().unwrap().push(shape);
@@ -1006,7 +985,6 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
         Pull::Quiet
     ));
     assert_eq!(*opened.lock().unwrap(), [settings(&RAW)]);
-    // The receiver drops, then asks for another shape.
     uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(SOFTWARE));
@@ -1058,7 +1036,6 @@ fn the_offer_is_the_capture_within_each_encoder() {
         offer.modes(StreamEncoding::Raw),
         Modes::from(prysm_capture_webos::MODE)
     );
-    // A capture no encoder takes is offered raw only.
     let tiny = Mode::new(Span::exactly(8), Span::exactly(8), span(1, 60, 1));
     let offer = crate::capture::offer(&[tiny]);
     assert_eq!(offer.modes(StreamEncoding::Raw), Modes::from(tiny));

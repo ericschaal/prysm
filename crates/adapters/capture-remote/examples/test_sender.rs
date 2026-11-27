@@ -48,7 +48,6 @@ fn options() -> Result<Options, String> {
     let mut url = None;
     let mut refuse = None;
     let mut stop_after = None;
-    // Everything a request may ask for, so only `--refuse` refuses.
     let mut offer = prysm_capture_remote::testkit::offer();
     fn number<T: std::str::FromStr>(value: Option<String>, name: &str) -> Result<T, String> {
         value

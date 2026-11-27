@@ -136,31 +136,19 @@ impl SourceFactory for Camera {
 // them as "capture.fps".
 ```
 
-An **output** is the same shape with `OutputFactory` and `LedOutput`
-(`write(&EdgeColors)`, `idle(self: Box<Self>, IdleMode)`); `idle` runs on every
-session exit, so it is also the failure compensation. An output that can ask
-its device about itself implements `report()` (default: nothing known): why
-the device does not show the colours, its own brightness while it scales
-them, and how many LEDs it drives, as a `DeviceReport`. The session calls it
-after every write, so it must not wait, and the engine republishes it as
-`Snapshot::device` once a second. WLED checks its state about once a second
-and reports power off, live override, no live mode, another sender or no
-answer; Prysm keeps sending and does not switch WLED back. Its brightness
-comes from `bri` in its state and, every 30th check instead of the state,
-`if.live.maxbri` and `light.scale-bri` from `/json/cfg`. The session opens the
-output at the source's first frame, not at start, and idles it `Native` (the
-device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
-at the next frame; a source that never delivers never takes the device over.
-An open that fails with `Escalation::Unanswered` (lights that do not answer)
-does not end the session: it reports `OutputIssue::Unreachable` and is tried
-again at a frame every `UNANSWERED_INTERVAL` (5 s); every other failed open
-ends it ([error handling](error-handling.md#rules)).
-To put a device nobody holds in another idle mode (lights off after such a
-release, or the device's own effects without a session) the engine calls
-`OutputFactory::idle(settings, mode)`, which by default opens and idles; an
-output that can set the mode without taking the device over overrides it,
-as WLED does. Register it with `.output(MyLeds)` in each host that should
-offer it.
+An **output** implements `OutputFactory`. Its readiness check can also
+report physical power and who controls the display. The runtime calls
+`open_for_sync` only after capture has opened. WLED grants a fresh user
+request permission to clear an override. A resumed stream respects an
+override and hands the display to Effects. While streaming, `report()`
+supplies device diagnostics without blocking the session. After a quiet
+spell the handle can release the display until the next frame.
+
+`LedOutput::release` consumes the handle during cleanup. The separate
+`OutputFactory::set_power` controls the device without starting a stream.
+An unavailable required adapter can signal a recovery through its monitor.
+See [error handling](error-handling.md#rules) for restart and release rules.
+Register an output with `.output(MyLeds)` in each host that offers it.
 
 A **surface** gets an `EngineHandle` (commands, snapshot watch, preview and
 colors watches)

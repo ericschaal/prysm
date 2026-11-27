@@ -70,7 +70,6 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        // The end of its output: the process is exiting, and is not reaped.
         let mut output = Vec::new();
         let mut stdout = child.stdout.take().unwrap();
         stdout.read_to_end(&mut output).unwrap();

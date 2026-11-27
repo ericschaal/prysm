@@ -141,7 +141,6 @@ async fn switching_the_active_calibration_while_running_keeps_source_and_output_
             .unwrap();
         wait_for_cast(&handle, Cast::Warm).await;
 
-        // Editing the active calibration's values is the same hot-swap.
         let mut cooled = warm;
         cooled.processing.calibrations[1].correction.warmth = -100;
         handle
@@ -150,7 +149,6 @@ async fn switching_the_active_calibration_while_running_keeps_source_and_output_
             .unwrap();
         wait_for_cast(&handle, Cast::Cool).await;
 
-        // Clearing the active calibration removes the correction.
         let cleared = with_active(None);
         handle
             .replace_settings(revision(&handle), cleared.clone())

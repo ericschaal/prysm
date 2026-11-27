@@ -159,13 +159,9 @@ export type WizardAction =
    * TV follows. `resume`: calibration ended, and is asked to show again.
    */
   | { type: 'requestSent'; place: Place; resume: boolean }
-  /**
-   * The TV shows a pattern asked for. `more`: a newer request is still on its
-   * way, and the TV now shows `more`.
-   */
-  | { type: 'patternShown'; more?: Place }
-  /** The TV refused the newest request: back to what it shows, saying why. */
-  | { type: 'requestFailed'; problem: string }
+  /** Each reply carries the place object of its request, even on a repeat visit. */
+  | { type: 'patternShown'; place: Place }
+  | { type: 'requestFailed'; place: Place; problem: string }
   | { type: 'named'; name: string }
   /** Cancel with changes: ask first. */
   | { type: 'confirmAsked' }
@@ -284,19 +280,23 @@ export function wizardReducer(
       if (calibrating?.request.kind !== 'sending') return state;
       const request = calibrating.request;
       return change({
-        request: action.more
-          ? { ...request, confirmed: action.more }
-          : { kind: 'idle' },
+        request:
+          action.place === calibrating.place
+            ? { kind: 'idle' }
+            : { ...request, confirmed: action.place },
       });
     }
     case 'requestFailed': {
-      if (calibrating?.request.kind !== 'sending') return state;
+      if (
+        calibrating?.request.kind !== 'sending' ||
+        action.place !== calibrating.place
+      )
+        return state;
       const request = calibrating.request;
       return {
         ...change({
           place: request.confirmed,
           request: { kind: 'idle' },
-          // A refused resume leaves calibration ended, as it was.
           seen: request.resuming || calibrating.seen,
         }),
         problem: action.problem,

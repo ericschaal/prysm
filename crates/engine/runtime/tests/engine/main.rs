@@ -2,6 +2,7 @@
 mod common;
 mod failures;
 mod input_reports;
+mod lifecycle;
 mod lookups;
 mod output_release;
 mod own_end;

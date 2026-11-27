@@ -273,9 +273,11 @@ release, and `latest` the newest stable release. A pre-release, such as
 
 ### Terminal UI (`prysm-tui`)
 
-The keys are `s` (Screen sync), `e` (effects) and `o` (off); `p` and `n` are
-gone. The commands are `on` or `screen_sync`, `effects` and `off`;
-`processed` and `native` are gone.
+Press `p` for Power. When the lights are on and the output supports its own
+effects, `s` selects Screen sync and `e` selects Effects. The command
+bar accepts `power` and follows the same mode availability for
+`screen_sync` and `effects`. The old `n` key and `processed` and `native`
+commands were removed.
 
 ## API and integration changes
 

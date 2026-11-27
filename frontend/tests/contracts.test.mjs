@@ -130,7 +130,7 @@ test('the Luna document covers both flavors with one State', () => {
       'full stopping',
       'full stopping',
       'slim asking',
-      ...Array(6).fill('slim running'),
+      ...Array(7).fill('slim running'),
       'slim stopped',
       'slim stopping',
     ],
@@ -204,6 +204,7 @@ test('the Luna document covers both flavors with one State', () => {
   assert.equal(validate('luna/SetEnabledRequest')({}), false);
   // Requests are closed: a target this version does not know is refused.
   assert(validate('luna/SetTargetRequest')({ target: 'effects' }));
+  assert(validate('luna/SetTargetRequest')({ target: 'remembered' }));
   assert.equal(validate('luna/SetTargetRequest')({ target: 'ambient' }), false);
   assert.equal(validate('luna/UninstallRequest')({ force: true }), false);
 });

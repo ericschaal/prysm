@@ -164,7 +164,6 @@ test('a new calibration is made step by step and finished under its name', async
       'processing.calibrations[0].correction.warmth',
       'processing.calibrations[0].correction.tint',
     ]);
-    // White's sliders are named by their ends too, with the value between.
     const ends = (input) =>
       $$('[aria-hidden="true"]', input.closest('.range')).map(
         (end) => end.textContent,
@@ -209,7 +208,6 @@ test('a new calibration is made step by step and finished under its name', async
       'calibration:gray_192',
     ]);
 
-    // Each primary: two sliders named by their ends, on its pair.
     fixture.calls.length = 0;
     await press(button('Looks right'));
     assert.equal(heading(), questions.red);
@@ -271,7 +269,6 @@ test('a new calibration is made step by step and finished under its name', async
       ['Adjust red', 'Adjust green'],
     );
 
-    // Adjusting from a check comes back to it.
     await press(button('Adjust green'));
     assert.equal(heading(), questions.green);
     assert(!button('Back'), 'the way on is back to the check');
@@ -450,7 +447,6 @@ test('starting from a saved calibration works on a copy; Cancel deletes it and r
     assert.deepEqual(patterns(fixture), ['calibration:gray_192']);
 
     await press(button('Looks right'));
-    // Nothing adjusted: nothing to lose, so no question.
     await press(button('Cancel calibration'));
     await act(async () => sleep(5));
     assert(!button('Discard'), 'not asked');
@@ -533,7 +529,6 @@ test('a tap moves on at once; the TV pattern follows, and a refusal goes back', 
     ]);
     assert.equal(fixture.snapshot().calibration.pattern, 'green_pair');
 
-    // The comparison is shown as on at once.
     release = fixture.holdPatterns();
     const compare = button('Show without correction');
     await tap(compare);
@@ -649,7 +644,6 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
     assert.deepEqual(patterns(fixture), ['calibration:red_pair']);
     assert.equal(heading(), questions.red);
 
-    // Lights turned off: calibration ends and the TV is needed again.
     await act(async () => {
       await fixture.client.setTarget('off');
       await sleep(5);
@@ -1051,7 +1045,7 @@ const states = {
 };
 
 /** One action of each kind. */
-const actions = {
+const actions = (currentPlace) => ({
   sourceChosen: { type: 'sourceChosen', from: 'q' },
   startRequested: { type: 'startRequested' },
   startFailed: { type: 'startFailed', problem: 'no', unconfirmed: null },
@@ -1065,9 +1059,11 @@ const actions = {
   patternSeen: { type: 'patternSeen' },
   requestSent: { type: 'requestSent', place: place(3, 4), resume: false },
   resumed: { type: 'requestSent', place: place(0), resume: true },
-  patternShown: { type: 'patternShown' },
-  patternShownMore: { type: 'patternShown', more: place(2) },
-  requestFailed: { type: 'requestFailed', problem: 'no' },
+  patternShown: { type: 'patternShown', place: currentPlace },
+  // A previous request may have visited exactly the same screen.
+  patternShownMore: { type: 'patternShown', place: place(2) },
+  requestFailed: { type: 'requestFailed', place: currentPlace, problem: 'no' },
+  olderRequestFailed: { type: 'requestFailed', place: place(2), problem: 'no' },
   named: { type: 'named', name: 'Movie night' },
   confirmAsked: { type: 'confirmAsked' },
   kept: { type: 'kept' },
@@ -1075,7 +1071,7 @@ const actions = {
   closingFailed: { type: 'closingFailed' },
   ending: { type: 'ending' },
   ended: { type: 'ended', title: 'Calibration cancelled', message: 'Deleted.' },
-};
+});
 
 /**
  * What every calibrating phase does with a tap, a name and the end: the
@@ -1189,7 +1185,9 @@ const transitions = {
 
 test('the wizard: each action in each state, and no change anywhere else', () => {
   for (const [name, state] of Object.entries(states))
-    for (const [kind, action] of Object.entries(actions)) {
+    for (const [kind, action] of Object.entries(
+      actions(state.phase.place ?? place(0)),
+    )) {
       const next = wizardReducer(state, action);
       const wanted = transitions[name][kind];
       if (wanted) assert.deepEqual(next, wanted, `${name} × ${kind}`);

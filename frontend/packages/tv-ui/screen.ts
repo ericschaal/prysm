@@ -5,23 +5,30 @@ import {
   slimEncoding,
   type Flavor,
   type State,
-  type StreamEncoding,
 } from '@prysm/webos-platform';
-import type { TvStatus } from './status';
+import type { SavedPreferences } from './preferences';
+import { lastState, type Link } from './service';
+import { cardCopy } from './status';
+import { buttons } from './status/copy';
+import {
+  ready,
+  type PortalFacts,
+  type PrimaryAction,
+} from './status/situation';
 
 /** The short names of the slim stream encodings (chosen in Prysm's portal). */
-const encodingNames: Record<StreamEncoding, string> = {
-  h264_hardware: 'Hardware H.264',
-  h264_software: 'Software H.264',
-  raw: 'Uncompressed',
-};
+const encodingNames = new Map<string, string>([
+  ['h264_hardware', 'Hardware H.264'],
+  ['h264_software', 'Software H.264'],
+  ['raw', 'Uncompressed'],
+]);
 
 /**
  * The short name of an encoding, as the status card shows it; one newer than
  * this app (the service passes it on) is shown as the service names it.
  */
-export function encodingName(encoding: StreamEncoding): string {
-  return encodingNames[encoding] || encoding;
+export function encodingName(encoding: string): string {
+  return encodingNames.get(encoding) ?? encoding;
 }
 
 /** The capture rate the TV reports, for the status card; `null` when none. */
@@ -31,8 +38,9 @@ export function captureRate(state: State | null): string | null {
   return fps > 0 ? `${fps} frames per second` : 'No frames yet';
 }
 
-/** The main screen around the status card, from the status and what the app knows. */
-export interface TvScreen {
+interface TvScreen {
+  ready: boolean;
+  action: PrimaryAction;
   title: string;
   description: string;
   attention: boolean;
@@ -57,21 +65,25 @@ export interface TvScreen {
  */
 export function tvScreen({
   flavor,
-  status,
-  state,
+  link,
+  draft,
+  portal,
   changing,
   portalAddress,
 }: {
   flavor: Flavor;
-  status: TvStatus;
-  state: State | null;
+  link: Link;
+  draft: SavedPreferences;
+  portal: PortalFacts | null;
   changing: boolean;
   portalAddress: string | null;
 }): TvScreen {
+  const copy = cardCopy(link, draft, portal);
+  const { action, label } = buttons[copy.button ?? 'none'];
+  // Missing service keeps its last state for package checks and capture details.
+  const state = lastState(link);
   const slim = flavor === 'slim';
   const mismatch = !!state && state.flavor !== flavor;
-  // One quiet line under the detail, always kept: while frames flow their
-  // rate (and the slim encoding).
   let meta = '';
   if (state && isCapturing(state) && !mismatch) {
     const encoding = slimEncoding(state);
@@ -79,31 +91,22 @@ export function tvScreen({
       .filter(Boolean)
       .join(' · ');
   }
-  // Full: no button while there is nothing for the service to do; the
-  // lighting modes are the one way to choose what the lights do. Its place
-  // under the status lines (where slim has its button) stays reserved, so the
-  // lights card never moves when it comes (Try again, Set up service). Slim
-  // keeps its button while capture stops ("Please wait…"). Full: never only
-  // because a setting is being saved, or a "Please wait…" button would fill
-  // the empty place for the length of the call.
-  const showPrimary =
-    status.action !== 'none' || (slim && (changing || !!status.label));
-  const setupFirst = status.setupLights && !mismatch && !!portalAddress;
+  const showPrimary = action !== 'none' || (slim && (changing || !!label));
+  const setupFirst = !!copy.setupLights && !mismatch && !!portalAddress;
   return {
-    title: mismatch ? 'Reinstall Prysm' : status.title,
+    ready: !!state && link.status !== 'missing' && ready(state),
+    action,
+    title: mismatch ? 'Reinstall Prysm' : copy.title,
     description: mismatch
       ? 'The app and its TV service don’t match.'
-      : status.description,
-    attention: status.attention || mismatch,
+      : copy.description,
+    attention: copy.attention || mismatch,
     meta,
     showPrimary,
-    label: changing ? 'Please wait…' : status.label,
-    waiting: changing || status.action === 'none',
+    label: changing ? 'Please wait…' : label,
+    waiting: changing || action === 'none',
     mismatch,
     setupFirst,
-    // The full package's portal address arrives with the worker; its panel
-    // keeps its place meanwhile, empty (nothing to scan yet), so Settings
-    // does not move down.
     portalPanel: !setupFirst && (!!portalAddress || !state || !slim),
   };
 }

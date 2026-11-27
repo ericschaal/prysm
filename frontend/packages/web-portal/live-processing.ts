@@ -7,10 +7,14 @@ import {
   useState,
 } from 'react';
 import { failureOf, same } from '@prysm/application-client';
-import type { Calibration, Processing } from '@prysm/contracts/application';
-import { processingMaxima } from '@prysm/contracts/constants';
+import type {
+  Calibration,
+  CorrectionControls,
+} from '@prysm/contracts/application';
+import type { Processing } from '@prysm/contracts/application-reading';
+import { processingBounds, styleBounds } from '@prysm/contracts/constants';
 import { useDraft } from './draft';
-import type { SaveState } from './save-state';
+import { usePortal } from './portal-context';
 import {
   refusedValue,
   saveProblem,
@@ -23,53 +27,32 @@ import {
  * values, detail, black bars, plus the calibrations and the active one.
  * Other processing fields are preserved.
  */
-export type ProcessingControls = Pick<
-  Processing,
-  | 'brightness_percent'
-  | 'style'
-  | 'custom_style'
-  | 'sample_density'
-  | 'remove_black_bars'
-  | 'calibrations'
-  | 'active_calibration'
->;
+export type ProcessingControls = ReturnType<typeof pictureControls> &
+  Pick<Processing, 'calibrations' | 'active_calibration'>;
 
-/**
- * Limits from the generated `Processing` schema (`minimum`/`maximum`),
- * checked against it in tests/portal.test.jsx; Rust's named maxima are
- * generated (`processingMaxima`).
- */
 export const processingLimits = {
-  brightness_percent: { min: 0, max: 100, step: 1 },
-  sample_density: {
-    min: 1,
-    max: processingMaxima.sample_density,
-    step: 1,
-  },
+  brightness_percent: { ...processingBounds.brightness_percent, step: 1 },
+  sample_density: { ...processingBounds.sample_density, step: 1 },
 } as const;
 
-/** The style knobs' limits, from the generated `StyleValues` schema likewise. */
 export const styleLimits = {
-  smoothing_seconds: {
-    min: 0,
-    max: processingMaxima.smoothing_seconds,
-    step: 0.05,
-  },
-  cut_response_percent: { min: 0, max: 100, step: 1 },
+  smoothing_seconds: { ...styleBounds.smoothing_seconds, step: 0.05 },
+  cut_response_percent: { ...styleBounds.cut_response_percent, step: 1 },
   brightness_ramp_seconds: {
-    min: 0,
-    max: processingMaxima.brightness_ramp_seconds,
+    ...styleBounds.brightness_ramp_seconds,
     step: 0.1,
   },
-  spatial_reach_percent: { min: 1, max: 100, step: 1 },
-  color_focus_percent: { min: 0, max: 100, step: 1 },
-  saturation_boost_percent: { min: 0, max: 100, step: 1 },
-  dark_floor_percent: {
-    min: 0,
-    max: processingMaxima.dark_floor_percent,
+  spatial_reach_percent: { ...styleBounds.spatial_reach_percent, step: 1 },
+  color_focus_percent: { ...styleBounds.color_focus_percent, step: 1 },
+  saturation_boost_percent: {
+    ...styleBounds.saturation_boost_percent,
     step: 1,
   },
+  dark_floor_percent: { ...styleBounds.dark_floor_percent, step: 1 },
 } as const;
+
+/** How long “Saved” shows before the page says all changes are saved. */
+export const savedForMs = 2000;
 
 /** Wait this long after the last change before applying it. */
 export const processingDelayMs = 400;
@@ -123,18 +106,21 @@ export function throttled<T>(intervalMs: number) {
   };
 }
 
+function pictureControls(processing: Processing) {
+  return {
+    brightness_percent: processing.brightness_percent,
+    style: processing.style,
+    ...(processing.custom_style
+      ? { custom_style: processing.custom_style }
+      : {}),
+    sample_density: processing.sample_density,
+    remove_black_bars: processing.remove_black_bars,
+  };
+}
+
 export function processingControls(processing: Processing): ProcessingControls {
   return withCalibrations(
-    {
-      brightness_percent: processing.brightness_percent,
-      style: processing.style,
-      // Absent until first tuned, as the server sends it.
-      ...(processing.custom_style
-        ? { custom_style: processing.custom_style }
-        : {}),
-      sample_density: processing.sample_density,
-      remove_black_bars: processing.remove_black_bars,
-    },
+    pictureControls(processing),
     processing.calibrations,
     processing.active_calibration,
   );
@@ -144,22 +130,17 @@ export function processingControls(processing: Processing): ProcessingControls {
  * `controls` with `calibrations` and `active_calibration` as the server sends them:
  * absent when empty or none, so a saved draft equals the state that follows.
  */
-export function withCalibrations<T extends object>(
-  controls: T,
+export function withCalibrations(
+  controls: ProcessingControls,
   calibrations: Processing['calibrations'],
   active: string | undefined,
-): Omit<T, 'calibrations' | 'active_calibration'> &
-  Pick<Processing, 'calibrations' | 'active_calibration'> {
-  const rest = { ...controls } as Partial<
-    Pick<Processing, 'calibrations' | 'active_calibration'>
-  >;
-  delete rest.calibrations;
-  delete rest.active_calibration;
-  return {
-    ...(rest as Omit<T, 'calibrations' | 'active_calibration'>),
-    ...(calibrations?.length ? { calibrations } : {}),
-    ...(active === undefined ? {} : { active_calibration: active }),
-  };
+): ProcessingControls {
+  const next = { ...controls };
+  if (calibrations?.length) next.calibrations = calibrations;
+  else delete next.calibrations;
+  if (active === undefined) delete next.active_calibration;
+  else next.active_calibration = active;
+  return next;
 }
 
 /**
@@ -169,17 +150,17 @@ export function withCalibrations<T extends object>(
  * the user's own (shown) value wins. Each calibration counts as a control of
  * its own (see {@link rebasedCalibrations}).
  */
-export function rebased(
-  saved: ProcessingControls,
-  base: ProcessingControls,
-  draft: ProcessingControls,
+export function rebased<T extends ProcessingControls>(
+  saved: T,
+  base: T,
+  draft: T,
 ): ProcessingControls {
-  const next: Record<string, unknown> = { ...saved };
-  const mine = draft as Record<string, unknown>;
-  const before = base as Record<string, unknown>;
-  for (const key of new Set([...Object.keys(mine), ...Object.keys(before)])) {
-    if (key === 'calibrations' || same(mine[key], before[key])) continue;
-    if (key in mine) next[key] = mine[key];
+  const next = { ...saved };
+  const fields = { ...draft, ...base };
+  for (const key in fields) {
+    if (!Object.prototype.hasOwnProperty.call(fields, key)) continue;
+    if (key === 'calibrations' || same(draft[key], base[key])) continue;
+    if (key in draft) next[key] = draft[key];
     else delete next[key];
   }
   const calibrations = rebasedCalibrations(
@@ -189,7 +170,7 @@ export function rebased(
   );
   if (calibrations.length) next.calibrations = calibrations;
   else delete next.calibrations;
-  return next as unknown as ProcessingControls;
+  return next;
 }
 
 /**
@@ -209,20 +190,21 @@ export function rebasedCalibrations(
   const mine = new Map(
     draft.map((calibration) => [calibration.id, calibration]),
   );
-  const kept = saved.flatMap((theirs) => {
+  const merged: Calibration[] = [];
+  for (const theirs of saved) {
     const original = before.get(theirs.id);
     const edited = mine.get(theirs.id);
-    if (!original) return [edited ?? theirs];
-    if (!edited) return [];
-    return [same(edited, original) ? theirs : edited];
-  });
-  const added = draft.filter(
-    (calibration) =>
-      !before.has(calibration.id) &&
-      !saved.some((theirs) => theirs.id === calibration.id),
-  );
-  return [...kept, ...added];
+    if (!original) merged.push(edited ?? theirs);
+    else if (edited) merged.push(same(edited, original) ? theirs : edited);
+  }
+  for (const added of draft) {
+    if (!before.has(added.id) && !saved.some((item) => item.id === added.id))
+      merged.push(added);
+  }
+  return merged;
 }
+
+export type SaveState = 'idle' | 'saving' | 'failed';
 
 /** A save that failed, shown until the draft changes or it is retried. */
 interface FailedSave {
@@ -249,23 +231,9 @@ type SavePhase =
 const idle: SavePhase = { kind: 'idle' };
 
 /**
- * The processing section as a draft that saves itself: each change is applied
- * shortly after the user stops adjusting it, and `commit` applies one at once.
- * Shared by the Picture panel, the light card and the calibration wizard, so
- * all save the same way. Render the fields inside `FieldScopeProvider
- * value={scope}`.
- *
- * Saves never overlap: each waits for the one before it and is sent against
- * the revision that one returned, so `commit(value)` resolves only once
- * `value` itself is saved, with what was saved: `value`, moved onto any
- * change made elsewhere meanwhile.
- *
- * A save refused because the settings changed elsewhere is not lost: once
- * the newer settings arrive, the user's changes are moved onto them and
- * saved again. A failed save is shown at the control that was changed, with
- * a retry there, until the draft is changed to another value, it is retried,
- * or a newer state shows its value saved after all. While a save is on its way
- * the state is `saving`.
+ * Edit processing settings with debounced saves and live slider trials.
+ * Commits run in order and return the value saved after any rebase, or null
+ * on failure. Field errors and retry actions are exposed through `scope`.
  */
 export function useLiveProcessing({
   processing,
@@ -299,8 +267,6 @@ export function useLiveProcessing({
   const [trials] = useState(() => throttled<Processing>(trialIntervalMs));
   /** Values were tried since the last save, so the lights may not match it. */
   const [tried, setTried] = useState(false);
-  // A save whose answer never came may have run all the same: a newer state
-  // that shows its value answers it.
   if (
     phase.kind === 'failed' &&
     revision !== phase.sentAt &&
@@ -309,7 +275,6 @@ export function useLiveProcessing({
     setPhase(idle);
     errors.clearServer();
   }
-  /** A field's own check or the server refuses a value. */
   const invalid =
     Object.keys(errors.local).length > 0 ||
     Object.keys(errors.server).length > 0;
@@ -322,10 +287,7 @@ export function useLiveProcessing({
     invalid ||
     (phase.kind === 'failed' && same(phase.value, draft.draft));
 
-  /**
-   * The latest render's state, for a save that waited for the one before it:
-   * the values of the render that asked for it are older by then.
-   */
+  /** Queued saves read the most recently committed render. */
   const latest = useRef({ processing, revision, saved, draft });
   useLayoutEffect(() => {
     latest.current = { processing, revision, saved, draft };
@@ -336,13 +298,9 @@ export function useLiveProcessing({
     ...value,
   });
 
-  /** The end of the queue of saves; it never rejects. */
+  /** The most recently queued save. */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  /**
-   * The last save: the revision the state showed when it was sent, and the
-   * revision it returned. Until the state shows another revision, the next
-   * save goes against the returned one.
-   */
+  /** Acknowledged revision to use until the stream advances. */
   const lastSave = useRef<{ sentAt: number; savedAs: number } | null>(null);
   /**
    * Save `edited` after the saves before it; resolves with what was saved
@@ -370,8 +328,6 @@ export function useLiveProcessing({
       value = rebased(current.saved, current.draft.base, edited);
       current.draft.rebase(value);
     }
-    // A save on its way answers the one before it: its failure, the
-    // controls it marked, or its wait for newer settings.
     errors.clearServer();
     setPhase({ kind: 'saving' });
     try {
@@ -385,7 +341,6 @@ export function useLiveProcessing({
       return value;
     } catch (error) {
       const reason = failureOf(error);
-      // Saved again once the newer settings arrive.
       if (reason.kind === 'stale_revision') {
         setPhase({ kind: 'stale', at: expected });
         return null;
@@ -405,15 +360,16 @@ export function useLiveProcessing({
   }
   // Debounce: every change restarts the wait. A new revision (another section
   // saved meanwhile) also restarts it.
-  const applyLater = useEffectEvent((value: ProcessingControls) => {
-    void apply(value);
-  });
+  const applyLater = useEffectEvent(apply);
   // A held slider saves on release instead. Values tried on the lights are
   // saved too, even when they ended where they started, to end the trial.
   const pending = draft.dirty || tried;
   useEffect(() => {
     if (!pending || blocked || held) return;
-    const timer = setTimeout(() => applyLater(draft.draft), processingDelayMs);
+    const timer = setTimeout(
+      () => void applyLater(draft.draft),
+      processingDelayMs,
+    );
     return () => clearTimeout(timer);
   }, [draft.draft, pending, blocked, held, revision]);
 
@@ -502,4 +458,52 @@ export function useLiveProcessing({
       },
     },
   };
+}
+
+/** A processing draft bound to the connected portal. */
+export function useProcessingEditor() {
+  const { snapshot, online, commands } = usePortal();
+  return useLiveProcessing({
+    processing: snapshot.settings.processing,
+    revision: snapshot.revision,
+    disabled: !online,
+    save: commands.configureProcessing,
+    tryProcessing: commands.tryProcessing,
+  });
+}
+
+export type ProcessingEditor = ReturnType<typeof useProcessingEditor>;
+
+/** Edit one calibration in the current draft. Both editors address field errors by its current list index. */
+export function editCalibration(
+  live: ProcessingEditor,
+  id: string | undefined,
+) {
+  const calibrations = live.value.calibrations ?? [];
+  const index = calibrations.findIndex((item) => item.id === id);
+  const calibration = calibrations[index];
+  if (!calibration) return null;
+  const path = `processing.calibrations[${index}]`;
+  function update(change: Partial<Calibration>, field: string) {
+    const next = calibrations.map((item, at) =>
+      at === index ? { ...item, ...change } : item,
+    );
+    live.slider.slide(
+      withCalibrations(live.value, next, live.value.active_calibration),
+      `${path}.${field}`,
+    );
+  }
+  const { correction } = calibration;
+  const sliders = {
+    path: `${path}.correction`,
+    values: correction,
+    change: (patch: Partial<CorrectionControls>, control: string) =>
+      update(
+        { correction: { ...correction, ...patch } },
+        `correction.${control}`,
+      ),
+    onPress: live.slider.press,
+    onRelease: live.slider.release,
+  };
+  return { calibration, index, path, sliders, update };
 }

@@ -7,7 +7,7 @@
 //! stream; `clippy::print_stdout` is denied in the workspace besides. A
 //! reader thread decodes [`Command`]s from stdin; stdin EOF or a bad line
 //! stops the worker.
-use crate::{Command, Event, Failure, FullStatus, LineReader, LinkError, WorkerStatus, encode};
+use crate::{Command, Event, Failure, LineReader, LinkError, WorkerStatus, encode};
 use prysm_ports::{Error, chain};
 use std::future::Future;
 use std::io::{self, Write};
@@ -89,9 +89,11 @@ impl Events {
     /// (escaping can make a text up to six times longer). A supervisor that
     /// stopped reading means stop.
     pub fn send(&self, event: &Event) {
+        let mut event = event.clone();
         let mut limit = MAX_TEXT;
         let line = loop {
-            match encode(&fit(event.clone(), limit)) {
+            shorten(&mut event, limit);
+            match encode(&event) {
                 Ok(line) => break line,
                 Err(LinkError::Oversized) if limit > 0 => limit /= 2,
                 // Unreachable: with no text left every event fits.
@@ -109,40 +111,30 @@ impl Events {
 
 const MAX_TEXT: usize = 1024;
 
-/// `text`, cut to `limit` bytes at a character boundary.
-fn short(text: String, limit: usize) -> String {
-    if text.len() <= limit {
-        return text;
-    }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
-}
-
-/// `event` with every free text cut to `limit` bytes.
-fn fit(event: Event, limit: usize) -> Event {
-    let short = |text| short(text, limit);
-    let short_failure = |failure: Failure| Failure {
-        message: short(failure.message),
-        ..failure
+/// Truncate each free-text field at a UTF-8 boundary, preserving its event.
+fn shorten(event: &mut Event, limit: usize) {
+    let trim = |text: &mut String| {
+        if text.len() > limit {
+            text.truncate(text.floor_char_boundary(limit));
+            text.push('…');
+        }
     };
     match event {
+        Event::Initialized {} => {}
         Event::Status(WorkerStatus::Full(status)) => {
-            Event::Status(WorkerStatus::Full(FullStatus {
-                portal: status.portal.map(short),
-                failure: status.failure.map(short_failure),
-                ..status
-            }))
-        }
-        Event::Status(WorkerStatus::Slim(mut status)) => {
-            if let Some(message) = status.link.message_mut() {
-                *message = short(std::mem::take(message));
+            if let Some(portal) = &mut status.portal {
+                trim(portal);
             }
-            Event::Status(WorkerStatus::Slim(status))
+            if let Some(failure) = &mut status.failure {
+                trim(&mut failure.message);
+            }
         }
-        Event::Failed(failure) => Event::Failed(short_failure(failure)),
+        Event::Status(WorkerStatus::Slim(status)) => {
+            if let Some(message) = status.link.message_mut() {
+                trim(message);
+            }
+        }
+        Event::Failed(failure) => trim(&mut failure.message),
     }
 }
 
@@ -465,7 +457,7 @@ fn watch_signals(stop: &StopHandle) -> prysm_ports::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SlimLink, SlimStatus};
+    use crate::{FullStatus, SlimLink, SlimStatus};
     use prysm_ports::SessionPhase;
 
     #[test]

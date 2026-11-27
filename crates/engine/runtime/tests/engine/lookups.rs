@@ -32,21 +32,16 @@ async fn a_running_lookup_is_shared_by_who_asks_meanwhile() {
             let (handle, gated) = (handle.clone(), gated.clone());
             async move { handle.capture_modes(gated).await }
         });
-        // In its blocking call, held at the gate.
         assert!(log.wait_for("source.modes", 1).await);
-        // Other settings are another lookup, and so are candidates.
         handle.capture_modes(modes(false, 64)).await.unwrap();
         handle.candidates(Section::Output, "fake").await.unwrap();
         assert_eq!(log.count("source.modes"), 2);
-        // Given up on, the first still runs; asking the same joins it (the
-        // ask is polled first, then the gate opens).
         first.abort();
         let (shared, ()) = tokio::join!(handle.capture_modes(gated.clone()), async {
             log.record(OPEN);
         });
         let shared = shared.unwrap();
         assert_eq!(log.count("source.modes"), 2, "no second call");
-        // Returned: the next ask looks again, past the open gate.
         assert_eq!(handle.capture_modes(gated).await.unwrap(), shared);
         assert_eq!(log.count("source.modes"), 3);
         engine.shutdown().await.unwrap();

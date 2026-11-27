@@ -1,4 +1,6 @@
-use crate::{DeviceReport, Hangup, Result, Settings, ValidationError};
+use crate::{
+    DeviceReport, Hangup, OutputObservationState, OutputRelease, Result, Settings, ValidationError,
+};
 use prysm_core::{EdgeColors, Frame};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -38,7 +40,7 @@ pub struct SourceStop {
     /// A pull in flight that returns a frame, after its timeout (the rest
     /// of a frame that began); the frame is then written before the loop
     /// sees the stop (an open it needs ends at once: see
-    /// [`OutputFactory::open`](crate::OutputFactory::open)).
+    /// [`OutputFactory::open_for_sync`](crate::OutputFactory::open_for_sync)).
     pub frame: Duration,
     /// A pull in flight that ends the source (its end or a failure), after
     /// its timeout; nothing is opened after it.
@@ -75,13 +77,18 @@ impl<T: FrameSource + ?Sized> FrameSource for Box<T> {
 /// An LED driver.
 pub trait LedOutput: Send {
     fn write(&mut self, colors: &EdgeColors) -> Result<()>;
-    /// Called once after the last `write`; also the failure-compensation
-    /// path. Ends at once when `stop` is cut, failing with a
-    /// [`Stopping`](crate::Stopping) cause; the device is then in no known
-    /// mode. A session cuts it when it is asked to stop while it releases
-    /// the output after a quiet spell; its own idle at the end gets one it
-    /// never cuts.
-    fn idle(self: Box<Self>, mode: IdleMode, stop: &Hangup) -> Result<()>;
+    /// Consume the handle. With a handoff the device keeps its own display.
+    /// Remote command failure leaves physical state unconfirmed. Return
+    /// [`crate::Error::Faulted`] when local release cannot be certified.
+    fn release(self: Box<Self>, _release: OutputRelease, _stop: &Hangup) -> Result<()> {
+        Ok(())
+    }
+
+    /// Most recent device facts, updated by the adapter's active report.
+    fn stream_observation(&self) -> OutputObservationState {
+        OutputObservationState::Unsupported
+    }
+
     /// What the device says about itself, as far as it last said (see
     /// [`DeviceReport`]); empty while the output cannot tell. Called on the
     /// session thread after every `write`, so it returns within
@@ -117,7 +124,6 @@ impl DeviceBrightness {
         let level = u64::from(level).min(full);
         let percent = ((level * 100 + full / 2) / full).max(u64::from(level > 0));
         Self {
-            // Never above 100: `level` is at most `full`.
             percent: u8::try_from(percent).unwrap_or(100),
         }
     }
@@ -216,6 +222,15 @@ impl<T: FrameSink + ?Sized> FrameSink for Box<T> {
 
 /// Persisted settings. Blocking; the engine calls it off the async runtime.
 pub trait SettingsStore: Send {
+    /// Optional persisted mode, independent of device power and settings revision.
+    fn load_mode(&mut self) -> Result<Option<crate::LightingMode>> {
+        Ok(None)
+    }
+    /// Stores without persistence may keep this choice for the process lifetime only.
+    fn save_mode(&mut self, _mode: crate::LightingMode) -> Result<()> {
+        Ok(())
+    }
+
     /// `Ok(None)`: nothing saved yet. `Err`: the store holds something it
     /// cannot read as settings, or cannot read at all; the engine then
     /// starts unconfigured and reports this as its failure. What could not

@@ -6,7 +6,7 @@ import { expect, test } from './prysm';
 
 test.use({ viewport: { width: 390, height: 600 } });
 
-/** In the page before it loads: layout shifts and every save line seen. */
+/** Layout shifts and save lines during the settings journey. */
 function watch() {
   const describe = (node: Node | null | undefined) => {
     if (!node) return '?';
@@ -46,10 +46,10 @@ function watch() {
           `${entry.value.toFixed(5)} at ${Math.round(entry.startTime)} ms (${last}${entry.hadRecentInput ? ', after input' : ''}) ${location.hash}: ${sources}`,
         );
       }
-    }).observe({ type: 'layout-shift', buffered: true });
+    }).observe({ type: 'layout-shift' });
     seen.shifts = [];
   } catch {
-    // WebKit has no layout-shift entries.
+    // Collect the other observations when layout shifts are unavailable.
   }
   const record = () => {
     const line = document.querySelector('.save-status')?.textContent ?? '';
@@ -78,20 +78,18 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   prysm,
   startSender,
 }) => {
-  await page.addInitScript(watch);
   const sender = startSender();
   await page.goto('/');
-  await mark(page, 'power on');
-  await page
-    .getByRole('region', { name: 'Your lights' })
-    .getByRole('button', { name: 'Power' })
-    .click();
+  await page.locator('[data-power]').click();
   await expect(page).toHaveTitle('Prysm');
   await sender.waitFor('connected');
   await expect
     .poll(async () => (await prysm.state()).session.state)
     .toBe('screen_sync');
+  await expect(page.getByRole('slider', { name: 'Brightness' })).toBeVisible();
 
+  // Turning on intentionally expands Home. Measure only the settings journey.
+  await page.evaluate(watch);
   await mark(page, 'to Settings');
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page).toHaveURL(/#\/settings$/);

@@ -1,6 +1,7 @@
 //! What a capture source can deliver: its sizes and rates, as the hardware
 //! that owns them says.
 use crate::ValidationError;
+use num_integer::Integer;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -40,7 +41,6 @@ impl Span {
             return None;
         }
         let max = max - (max - min) % step.get();
-        // One value has one spelling.
         let step = if min == max { NonZeroU32::MIN } else { step };
         Some(Self { min, max, step })
     }
@@ -75,15 +75,14 @@ impl Span {
         }
         // x ≡ self.min (mod s) and x ≡ other.min (mod t).
         let (s, t) = (i128::from(self.step.get()), i128::from(other.step.get()));
-        let g = gcd(s, t);
+        let bezout = s.extended_gcd(&t);
+        let g = bezout.gcd;
         let difference = i128::from(other.min) - i128::from(self.min);
         if difference % g != 0 {
             return None;
         }
-        // s·k ≡ difference (mod t), solved with the inverse of s/g modulo t/g.
-        let modulus = t / g;
-        let (_, inverse, _) = extended_gcd(s / g, modulus);
-        let k = ((difference / g) % modulus * inverse).rem_euclid(modulus);
+        // s·x + t·y = g, so multiplying x by difference/g gives an offset in steps of s.
+        let k = (bezout.x * (difference / g)).rem_euclid(t / g);
         let common = i128::from(self.min) + s * k;
         let step = s / g * t;
         let first = i128::from(low) + (common - i128::from(low)).rem_euclid(step);
@@ -93,20 +92,6 @@ impl Span {
             // A step beyond `u32` reaches no second value.
             Err(_) => Some(Self::exactly(first)),
         }
-    }
-}
-
-fn gcd(a: i128, b: i128) -> i128 {
-    if b == 0 { a } else { gcd(b, a % b) }
-}
-
-/// `(g, x, y)` with `a·x + b·y = g = gcd(a, b)`.
-fn extended_gcd(a: i128, b: i128) -> (i128, i128, i128) {
-    if b == 0 {
-        (a, 1, 0)
-    } else {
-        let (g, x, y) = extended_gcd(b, a % b);
-        (g, y, x - a / b * y)
     }
 }
 
@@ -120,11 +105,26 @@ impl fmt::Display for Span {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+/// `min`, `min + step`, … up to `max` (always reached); a single value is
+/// `min == max` with step 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SpanFields {
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema), schema(as = Span))]
+pub struct SpanFields {
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 0, maximum = 4_294_967_295_u64, example = 2)
+    )]
     min: u32,
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 0, maximum = 4_294_967_295_u64, example = 1920)
+    )]
     max: u32,
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 1, maximum = 4_294_967_295_u64, example = 2)
+    )]
     step: u32,
 }
 
@@ -152,9 +152,13 @@ impl From<Span> for SpanFields {
 /// and frame rates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Mode {
+    #[cfg_attr(feature = "schema", schema(value_type = SpanFields))]
     width: Span,
+    #[cfg_attr(feature = "schema", schema(value_type = SpanFields))]
     height: Span,
+    #[cfg_attr(feature = "schema", schema(value_type = SpanFields))]
     fps: Span,
 }
 
@@ -242,8 +246,8 @@ impl Modes {
                 "this source delivers no picture with these settings",
             ));
         }
-        let wide: Vec<&Mode> = modes.iter().filter(|m| m.width.contains(width)).collect();
-        if wide.is_empty() {
+        let mut wide = modes.iter().filter(|m| m.width.contains(width)).peekable();
+        if wide.peek().is_none() {
             return Err(ValidationError::new(
                 "width",
                 format!(
@@ -252,28 +256,27 @@ impl Modes {
                 ),
             ));
         }
-        let sized: Vec<&Mode> = wide
-            .iter()
-            .copied()
+        let mut sized = wide
+            .clone()
             .filter(|m| m.height.contains(height))
-            .collect();
-        if sized.is_empty() {
+            .peekable();
+        if sized.peek().is_none() {
             return Err(ValidationError::new(
                 "height",
                 format!(
                     "at width {width} this source delivers a height of {}",
-                    listed(wide.iter().map(|m| m.height))
+                    listed(wide.map(Mode::height))
                 ),
             ));
         }
-        if sized.iter().any(|m| m.fps.contains(fps)) {
+        if sized.clone().any(|m| m.fps.contains(fps)) {
             return Ok(());
         }
         Err(ValidationError::new(
             "fps",
             format!(
                 "at {width}x{height} this source delivers a frame rate of {}",
-                listed(sized.iter().map(|m| m.fps))
+                listed(sized.map(Mode::fps))
             ),
         ))
     }
@@ -281,16 +284,13 @@ impl Modes {
 
 /// `a, b or c`, sorted and without repeats, at most [`LISTED`] of them.
 fn listed(spans: impl Iterator<Item = Span>) -> String {
-    let spans: Vec<String> = spans
-        .collect::<BTreeSet<_>>()
-        .iter()
-        .map(Span::to_string)
-        .collect();
+    let spans: BTreeSet<_> = spans.collect();
     let more = spans.len().saturating_sub(LISTED);
-    let (shown, last) = if more > 0 {
-        (&spans[..LISTED], format!("{more} more"))
+    let mut shown: Vec<_> = spans.iter().take(LISTED).map(Span::to_string).collect();
+    let last = if more > 0 {
+        format!("{more} more")
     } else {
-        (&spans[..spans.len() - 1], spans[spans.len() - 1].clone())
+        shown.pop().expect("at least one available span")
     };
     if shown.is_empty() {
         last
@@ -299,9 +299,15 @@ fn listed(spans: impl Iterator<Item = Span>) -> String {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+/// What a capture source delivers with the posted settings, the reply of
+/// `POST /api/v1/capture/modes`: `unknown` when it cannot reach its
+/// hardware; `known` with exactly these modes (none: nothing with these
+/// settings). Ranges where the hardware takes any value in them, fixed
+/// modes where it offers fixed ones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema), schema(as = Modes))]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-enum ModesFields {
+pub enum ModesFields {
     Unknown,
     Known { modes: Vec<Mode> },
 }
@@ -378,17 +384,15 @@ mod tests {
                 }
             }
         }
-        // Encoder limits against capture limits.
         assert_eq!(
             span(2, 1920, 2).and(&span(176, 1920, 2)),
             Some(span(176, 1920, 2))
         );
         assert_eq!(span(2, 1920, 2).and(&span(1, 1919, 2)), None);
         assert_eq!(span(1, 10, 1).and(&span(11, 20, 1)), None);
-        // Huge steps meet at one value at most.
         let a = span(0, u32::MAX, u32::MAX);
         let b = span(1, u32::MAX, u32::MAX - 1);
-        assert_eq!(values(a.and(&b), 10), Vec::<u32>::new());
+        assert_eq!(a.and(&b), Some(Span::exactly(u32::MAX)));
         assert_eq!(
             a.and(&span(u32::MAX, u32::MAX, 1)),
             Some(Span::exactly(u32::MAX))

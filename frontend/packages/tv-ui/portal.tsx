@@ -28,7 +28,7 @@ const waitingMessage: Record<Exclude<Picture, 'arriving'>, string> = {
 };
 
 /**
- * The lighting card: the three modes, always in the same place, and one
+ * The lighting card shows Power, the available modes while On, and one
  * message under them (at most two short lines) when the chosen mode does not
  * say it all: starting, a problem, or why the buttons cannot work.
  */
@@ -46,7 +46,7 @@ export function LightingCard({
   /** Where a mode is sent. */
   route: ModeRoute;
   /** A mode sent to the TV service; it says its own failure. */
-  choose: (target: LightingTarget) => Promise<unknown>;
+  choose: (target: LightingTarget | 'remembered') => Promise<unknown>;
 }) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
   const { snapshot, connection } = portal;
@@ -62,7 +62,6 @@ export function LightingCard({
     target: TargetReading | undefined;
     kind: LightingSituation['kind'] | undefined;
   } | null>(null);
-  // Gone once the lights change, also when they change back.
   if (
     refusal &&
     (refusal.target !== snapshot?.target || refusal.kind !== lighting?.kind)
@@ -71,12 +70,14 @@ export function LightingCard({
   const error = refusal?.text ?? '';
   const onService = route.via === 'service';
 
-  async function choose(target: LightingTarget) {
+  async function choose(target: LightingTarget, power = false) {
     const at = { target: snapshot?.target, kind: lighting?.kind };
     setPending(target);
     setRefusal(null);
     try {
-      await (onService ? chooseOnService(target) : portal.setTarget(target));
+      await (onService
+        ? chooseOnService(power && !on ? 'remembered' : target)
+        : portal.setTarget(target));
     } catch (reason) {
       setRefusal({
         text: plainFailure(
@@ -99,7 +100,6 @@ export function LightingCard({
   if (connecting) {
     message = 'Connecting to Prysm…';
   } else if (onService) {
-    // No worker, so no portal: the status card says why, and what to do.
     said = 'Prysm stopped.';
   } else if (!portal.baseUrl) {
     message = full
@@ -111,14 +111,12 @@ export function LightingCard({
     attention = true;
   } else if (snapshot && lighting) {
     said = describeSituation(lighting, effects ?? 'Device effects').sentence;
-    // Said also with the lights off: settings that could not be applied.
     const failure = situationFailure(lighting);
     const kind = snapshot.settings.capture?.kind;
     if (lighting.kind === 'faulted') {
       message = said;
       attention = true;
     } else if (lighting.kind === 'unknown') {
-      // Newer than this app; what the state carries is still said.
       const carried = failure
         ? ` ${plainFailure(failure, 'unknown', effects ?? 'Device effects')}`
         : '';
@@ -126,6 +124,11 @@ export function LightingCard({
       attention = !!failure;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
+    } else if (snapshot.control?.waiting) {
+      message =
+        snapshot.control.waiting === 'capture'
+          ? 'Waiting for the video source.'
+          : 'Waiting for the lights.';
     } else if (failure) {
       const still =
         lighting.kind === 'failed' && lighting.effectsOn
@@ -137,11 +140,12 @@ export function LightingCard({
         effects ?? 'Device effects',
       )}${still}`;
       attention = true;
+    } else if (snapshot.control?.external) {
+      message = 'Live stream detected.';
     } else if (snapshot.device.issue && lighting.kind === 'sync') {
       message = describeOutputIssue(snapshot.device.issue);
       attention = true;
     } else if (lighting.kind === 'unanswered') {
-      // The mode is kept and applied once they answer, as the portal says.
       message = said;
       attention = true;
     } else if (!full && kind !== 'remote') {
@@ -160,7 +164,6 @@ export function LightingCard({
       : 'Prysm on your computer doesn’t take commands from the TV. The TV guide shows how to allow it.';
     attention = true;
   } else if (portal.stopped) {
-    // Not a lost connection: Prysm's answer says what to do.
     message = portal.stopped;
     attention = true;
   } else if (connection?.error) {
@@ -176,25 +179,39 @@ export function LightingCard({
 
   // A press in flight does not disable the track: a disabled control drops
   // focus, which the remote navigation then moves to another column. On
-  // the service every mode is offered: only the worker's portal knows the
-  // lights' setup, and it starts with the mode chosen.
+  // the service Power resumes the mode stored by the worker.
   const offline = !snapshot && !onService;
   const faulted = lighting?.kind === 'faulted';
   const hasOutput = !!snapshot?.settings.output;
   const hasCapture = !!snapshot?.settings.capture;
-  const chosen = route.via === 'service' ? route.target : snapshot?.target;
-  const modes: { value: LightingTarget; label: string; disabled: boolean }[] = [
+  const chosen = snapshot?.control?.external ? undefined : snapshot?.target;
+  const on = !onService && chosen !== 'off';
+  const resume =
+    snapshot?.control?.remembered ?? (effects ? 'effects' : 'screen_sync');
+  const choices: { value: LightingTarget; label: string; disabled: boolean }[] =
+    [
+      {
+        value: 'screen_sync',
+        label: 'Screen sync',
+        disabled: !onService && (!hasOutput || !hasCapture),
+      },
+      {
+        value: 'effects',
+        label: effects ?? 'Effects',
+        disabled: !onService && !effects,
+      },
+    ];
+  const showModes = on && !!effects;
+  const modes = [
     {
-      value: 'screen_sync',
-      label: 'Screen sync',
-      disabled: !onService && (!hasOutput || !hasCapture),
+      value: on ? ('off' as const) : resume,
+      label: 'Power',
+      disabled:
+        !on &&
+        !onService &&
+        (!hasOutput || (resume === 'screen_sync' && !hasCapture)),
     },
-    {
-      value: 'effects',
-      label: effects ?? 'Effects',
-      disabled: !onService && !effects,
-    },
-    { value: 'off', label: 'Off', disabled: false },
+    ...(showModes ? choices : []),
   ];
   return (
     <section
@@ -212,17 +229,21 @@ export function LightingCard({
       >
         {modes.map((mode) => (
           <button
-            key={mode.value}
+            key={mode.label}
             type="button"
-            id={`mode-${mode.value}`}
+            id={mode.label === 'Power' ? 'light-power' : `mode-${mode.value}`}
             className="mode"
             aria-pressed={
-              chosen === undefined ? undefined : chosen === mode.value
+              mode.label === 'Power' ? !offline && on : chosen === mode.value
             }
             disabled={offline || faulted || mode.disabled}
             aria-busy={pending === mode.value ? true : undefined}
             onClick={() => {
-              if (pending === null) void choose(mode.value);
+              if (
+                pending === null &&
+                !(mode.label === 'Power' && snapshot?.control?.busy)
+              )
+                void choose(mode.value, mode.label === 'Power');
             }}
           >
             {mode.label}

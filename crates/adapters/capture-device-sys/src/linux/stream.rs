@@ -1,4 +1,4 @@
-//! Explicit V4L buffer lifetime. Unlike the upstream stream, cleanup never panics.
+//! V4L2 buffer allocation and release.
 use crate::classify::{Fault, Op, classify, failure};
 use crate::{CaptureError, Result};
 use std::ffi::c_void;
@@ -14,7 +14,6 @@ use v4l::{
     v4l2,
 };
 
-/// What capture was doing when the stream failed.
 const WAITING: &str = "error waiting for a capture frame";
 const CAPTURING: &str = "error capturing frame";
 const REQUEUING: &str = "failed to requeue capture buffer";
@@ -25,9 +24,7 @@ enum Request<'a> {
     Querybuf(&'a mut v4l2_buffer),
     Qbuf(&'a mut v4l2_buffer),
     Dqbuf(&'a mut v4l2_buffer),
-    /// For the video capture buffer type.
     StreamOn,
-    /// For the video capture buffer type.
     StreamOff,
 }
 
@@ -230,7 +227,6 @@ impl Stream {
         }
         Ok(())
     }
-    /// Queue every buffer and stream on.
     pub fn start(&mut self) -> io::Result<()> {
         let handle = Arc::clone(&self.handle);
         self.start_with(&mut kernel(&handle))

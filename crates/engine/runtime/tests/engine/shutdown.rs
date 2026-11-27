@@ -17,7 +17,12 @@ async fn stop_writes_then_closes_source_then_idles_output_then_joins() {
         assert!(log.wait_for("output.write:a", 3).await);
         assert!(preview.latest().is_some());
 
+        snapshot_until(&handle, |s| matches!(s.session, SessionState::ScreenSync)).await;
         handle.set_target(LightingTarget::Off).await.unwrap();
+        snapshot_until(&handle, |s| {
+            s.control.power == Some(prysm_ports::Power::Off)
+        })
+        .await;
         log.record("joined");
 
         assert!(before(&log, "output.write:a", "source.close:a"));
@@ -54,12 +59,15 @@ async fn missed_stop_deadline_faults_and_only_shutdown_is_accepted() {
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
 
-        let error = handle.set_target(LightingTarget::Off).await.unwrap_err();
-        assert!(matches!(error, Error::Faulted(SessionPhase::ClosingSource)));
-        assert!(matches!(
-            handle.snapshot().borrow().session,
-            SessionState::Faulted(SessionPhase::ClosingSource)
-        ));
+        snapshot_until(&handle, |s| matches!(s.session, SessionState::ScreenSync)).await;
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        snapshot_until(&handle, |s| {
+            matches!(
+                s.session,
+                SessionState::Faulted(SessionPhase::ClosingSource)
+            )
+        })
+        .await;
         assert!(matches!(
             handle.set_target(LightingTarget::ScreenSync).await,
             Err(Error::Faulted(_))
@@ -102,12 +110,11 @@ async fn shutdown_abandons_a_command_stuck_in_an_adapter() {
         assert!(log.wait_for("source.opening:a", 1).await);
 
         let shutdown = shutdown_before_stuck_call_returns(engine).await;
+        assert!(matches!(shutdown, Err(Error::Faulted(_))), "{shutdown:?}");
         assert!(
-            matches!(shutdown, Err(Error::Adapter { .. })),
-            "{shutdown:?}"
+            starting.await.unwrap().is_ok(),
+            "intent was accepted before the open"
         );
-        let started = starting.await.unwrap();
-        assert!(matches!(started, Err(Error::Adapter { .. })), "{started:?}");
     })
     .await;
 }
@@ -158,7 +165,6 @@ async fn stuck_calls_in_sequence_share_one_shutdown_grace() {
             "{shutdown:?}"
         );
         assert!(matches!(saving.await.unwrap(), Err(Error::Adapter { .. })));
-        // Still queued when shutdown was asked for: refused, never started.
         assert!(matches!(starting.await.unwrap(), Err(Error::Closed)));
         assert_eq!(log.count("source.opening:a"), 0, "the open started");
     })
@@ -220,13 +226,15 @@ async fn unconfirmed_source_release_faults_the_engine() {
             .unwrap();
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:o", 1).await);
-        assert!(handle.set_target(LightingTarget::Off).await.is_err());
-        // The output was still idled, and nothing may reopen the device.
-        assert_eq!(log.count("output.idle:o:Off"), 1);
-        assert!(matches!(
-            handle.snapshot().borrow().session,
-            SessionState::Faulted(SessionPhase::SourceUnreleased)
-        ));
+        snapshot_until(&handle, |s| matches!(s.session, SessionState::ScreenSync)).await;
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        snapshot_until(&handle, |s| {
+            matches!(
+                s.session,
+                SessionState::Faulted(SessionPhase::SourceUnreleased)
+            )
+        })
+        .await;
         assert!(matches!(
             handle.set_target(LightingTarget::ScreenSync).await,
             Err(Error::Faulted(SessionPhase::SourceUnreleased))

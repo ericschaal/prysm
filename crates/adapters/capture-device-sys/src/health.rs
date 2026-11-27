@@ -27,16 +27,10 @@ use std::time::{Duration, Instant};
 /// [`GRACE`] in whole seconds.
 const GRACE_SECONDS: u32 = 3;
 
-/// How long a run of unusable buffers lasts before capture fails: long
-/// enough for a signal to come back.
+/// Grace period for consecutive unusable buffers.
 const GRACE: Duration = Duration::from_secs(GRACE_SECONDS as u64);
 
-/// How long capture waits for a buffer before it counts a stall: a second,
-/// plus one frame period at `rate`. A stall is only waited out, with no
-/// restart and no failure: a card without a signal went on sending (black)
-/// frames, and a driver that dropped buffers for seconds delivered again by
-/// itself, unrestarted. The timeout lets a stop be noticed and a run of
-/// unusable buffers end.
+/// Wait one second plus one frame period before checking for a stop or unusable buffers.
 pub(crate) fn stall_timeout(rate: NonZeroU32) -> Duration {
     Duration::from_secs(1) + Duration::from_secs(1) / rate.get()
 }
@@ -44,11 +38,8 @@ pub(crate) fn stall_timeout(rate: NonZeroU32) -> Duration {
 /// What one wait for a buffer brought.
 #[derive(Debug)]
 pub(crate) enum Event {
-    /// A usable frame, delivered.
     Frame,
-    /// A buffer that could not be used, and why.
     Rejected(BufferRejection),
-    /// No buffer within [`stall_timeout`].
     Stalled,
     /// An I/O error a stream restart may clear; `error` if it does not.
     #[cfg_attr(
@@ -58,10 +49,8 @@ pub(crate) enum Event {
     Interrupted(CaptureError),
 }
 
-/// What capture does next.
 #[derive(Debug)]
 pub(crate) enum Verdict {
-    /// Wait for the next buffer.
     Continue,
     /// Restart the stream after an interruption, then wait for the next
     /// buffer.
@@ -103,7 +92,6 @@ impl Health {
                 self.rejecting = None;
                 Verdict::Continue
             }
-            // Only a frame shows that a restart worked.
             Event::Stalled => {
                 self.rejecting = None;
                 Verdict::Continue
@@ -151,10 +139,8 @@ mod tests {
     use prysm_core::PayloadError;
 
     const RATE: NonZeroU32 = NonZeroU32::new(2).unwrap();
-    /// Buffers at `RATE` in [`GRACE`].
     const LIMIT: u32 = 6;
 
-    /// The verdicts, comparable.
     #[derive(Debug, PartialEq)]
     enum Kind {
         Continue,
@@ -185,7 +171,6 @@ mod tests {
     fn every_state_meets_every_event() {
         let start = Instant::now();
         let now = start + GRACE * 10;
-        // A run's start: just now, or longer ago than the grace.
         let young = now - GRACE / 2;
         let old = now - GRACE;
         let rejecting = |since, count| Some(Rejecting { since, count });

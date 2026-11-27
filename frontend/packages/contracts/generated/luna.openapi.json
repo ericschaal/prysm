@@ -132,6 +132,7 @@
               "fps": {
                 "description": "Frames per second over about the last second, rounded, while\nscreen sync runs; 0 while it waits for frames.",
                 "format": "int32",
+                "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -309,7 +310,6 @@
           "prysm_address": {
             "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
             "example": "http://192.168.1.20:8787",
-            "maxLength": 256,
             "type": "string"
           }
         },
@@ -346,13 +346,22 @@
         ],
         "type": "object"
       },
+      "SetTargetChoice": {
+        "description": "Lighting intent accepted by the full TV service.",
+        "enum": [
+          "off",
+          "screen_sync",
+          "effects",
+          "remembered"
+        ],
+        "type": "string"
+      },
       "SetTargetRequest": {
         "additionalProperties": false,
         "description": "`setTarget` request (full package).",
         "properties": {
           "target": {
-            "$ref": "#/components/schemas/LightingTarget",
-            "description": "What the lights do: off, screen sync, or their own effects."
+            "$ref": "#/components/schemas/SetTargetChoice"
           }
         },
         "required": [
@@ -385,6 +394,7 @@
               "fps": {
                 "description": "Frames sent per second over about the last second, rounded.",
                 "format": "int32",
+                "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -438,6 +448,24 @@
               "state": {
                 "enum": [
                   "waiting"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "capture_waiting"
                 ],
                 "type": "string"
               }

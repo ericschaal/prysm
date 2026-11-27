@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { captureDefaults } from '@prysm/contracts/constants';
-import type {
-  RemoteReceiverSettings,
-  StreamEncoding,
-} from '@prysm/contracts/host-desktop';
-import { TvPictureFields } from '@prysm/capture-webos-ui';
+import type { RemoteReceiverSettings } from '@prysm/contracts/host-desktop';
+import { IncludeTvMenus } from '@prysm/capture-webos-ui';
 import {
+  Advanced,
   nothingOffered,
+  PictureChoice,
   SelectField,
   useEachCaptureModes,
   type EditorProps,
@@ -14,6 +13,7 @@ import {
 import { encodingChoices } from './settings';
 
 const defaults = captureDefaults.remote;
+const loading = { state: 'loading' } as const;
 
 /** One question per encoding: only the encoding selects the TV's answer. */
 const queries = encodingChoices.map(({ value }) => ({
@@ -34,43 +34,53 @@ export function RemoteEditor({
   const encoding = value.encoding ?? defaults.encoding;
   /** The saved encoding stays listed, and in sight while it is not offered. */
   const [saved] = useState(encoding);
-  const modesOf = (of: StreamEncoding) =>
-    states[encodingChoices.findIndex((choice) => choice.value === of)] ?? {
-      state: 'loading' as const,
-    };
-  const lacks = (of: StreamEncoding) => nothingOffered(modesOf(of));
+  const choices = encodingChoices.map((choice, index) => {
+    const modes = states[index] ?? loading;
+    return { ...choice, modes, unavailable: nothingOffered(modes) };
+  });
+  const selected = choices.find((choice) => choice.value === encoding);
+  const inSight = choices.some(
+    (choice) => choice.value === saved && choice.unavailable,
+  );
   const select = (
     <SelectField
       path="capture.encoding"
       label="How the TV sends the picture"
       value={encoding}
-      options={encodingChoices.filter(
+      options={choices.filter(
         (choice) =>
-          !lacks(choice.value) ||
+          !choice.unavailable ||
           choice.value === saved ||
           choice.value === encoding,
       )}
       onChange={(next) => onChange({ ...value, encoding: next })}
       help={
-        lacks(encoding)
+        selected?.unavailable
           ? 'This TV can’t send the picture this way.'
-          : encodingChoices.find((choice) => choice.value === encoding)?.help
+          : selected?.help
       }
-      helpTone={lacks(encoding) ? 'warning' : undefined}
+      helpTone={selected?.unavailable ? 'warning' : undefined}
     />
   );
-  const inSight = lacks(saved);
   return (
-    <TvPictureFields
-      value={value}
-      defaults={defaults}
-      onChange={onChange}
-      modes={modesOf(encoding)}
-      source="This TV"
-      unreachable="The TV isn’t connected. Give the TV app the address of this page."
-      lead={inSight ? select : null}
-      advancedPaths={['capture.encoding']}
-      advanced={inSight ? null : select}
-    />
+    <>
+      {inSight ? select : null}
+      <PictureChoice
+        value={value}
+        defaults={defaults}
+        onChange={onChange}
+        modes={selected?.modes ?? loading}
+        source="This TV"
+        unreachable="The TV isn’t connected. Give the TV app the address of this page."
+      />
+      <Advanced paths={['capture.include_ui', 'capture.encoding']}>
+        <IncludeTvMenus
+          value={value}
+          onChange={onChange}
+          defaultValue={defaults.include_ui}
+        />
+        {inSight ? null : select}
+      </Advanced>
+    </>
   );
 }

@@ -60,7 +60,6 @@ fn forget(_: Mapping) -> std::result::Result<(), (Mapping, io::Error)> {
     Ok(())
 }
 
-/// What a test calls each request.
 fn name(request: &Request<'_>) -> &'static str {
     match request {
         Request::Dqbuf(_) => "dequeue",
@@ -122,7 +121,6 @@ fn each_request_has_its_own_code_and_structure() {
     assert_eq!(got, (VIDIOC_STREAMOFF, kind_at));
 }
 
-/// A poll that finds a buffer ready.
 fn ready(_: i32) -> io::Result<i32> {
     Ok(1)
 }
@@ -362,7 +360,6 @@ fn every_release_failure_is_retained_and_other_cleanup_is_attempted() {
                 vec!["stop", "unmap", "unmap", "free"]
             }
         );
-        // A second attempt only touches resources that were not successfully released.
         let retry = RefCell::new(Vec::new());
         stream
             .release_with(
@@ -422,7 +419,6 @@ fn a_device_gone_is_released_and_still_unmapped() {
         assert_eq!(unmapped, 2);
         assert!(!stream.active && !stream.allocated);
         assert!(stream.buffers.iter().all(Option::is_none));
-        // Nothing is left for a retry (or `Drop`) to touch.
         stream
             .release_with(&mut |_| panic!("released"), &mut |_| panic!("unmapped"))
             .unwrap();
@@ -434,7 +430,6 @@ fn other_errors_still_fail_the_release() {
     for (stop, free, failed) in [
         (Some(libc::EIO), None, libc::EIO),
         (None, Some(libc::EBUSY), libc::EBUSY),
-        // A device gone when stopping does not excuse a failure to free.
         (Some(libc::ENODEV), Some(libc::EBUSY), libc::EBUSY),
     ] {
         let mut stream = allocated();

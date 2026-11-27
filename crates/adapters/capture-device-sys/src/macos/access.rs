@@ -38,6 +38,17 @@ fn access(
     }
 }
 
+pub(super) fn check_access() -> Result<()> {
+    // SAFETY: AVMediaTypeVideo is AVFoundation's process-lifetime constant.
+    let video = unsafe { AVMediaTypeVideo };
+    access(
+        AVCaptureDevice::authorization_status_for_media_type(video),
+        Request::NotMade,
+    )
+    .map(drop)
+    .map_err(CaptureError::NoCameraAccess)
+}
+
 /// Whether the process may capture video, asking macOS when it has not
 /// decided; `Ok(false)` when `sink` stops while waiting for the answer.
 pub(super) fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {

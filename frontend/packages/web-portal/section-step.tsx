@@ -1,4 +1,4 @@
-import { use, useId, useState } from 'react';
+import { useId, useState } from 'react';
 import type { AdapterSide } from '@prysm/application-client';
 import {
   adapterFor,
@@ -7,7 +7,7 @@ import {
   type AdapterSection,
   type AdapterUis,
 } from './adapters';
-import { DeveloperContext } from './developer';
+import { useChrome } from './portal-context';
 import { FieldMessage } from './fields';
 import { useFieldScopeContext } from './form';
 import { RowChoice } from './rows';
@@ -17,7 +17,7 @@ import { RowChoice } from './rows';
  * kind's editor. Switching kinds keeps what was typed for the other kinds and
  * drops the server's errors for the section. Used inside a field scope.
  */
-export function SectionFields<S extends AdapterSection>({
+export function SectionFields({
   section,
   adapters,
   value,
@@ -25,24 +25,24 @@ export function SectionFields<S extends AdapterSection>({
   onChange,
 }: {
   section: AdapterSide;
-  adapters: AdapterUis<S>;
-  value: S;
+  adapters: AdapterUis;
+  value: AdapterSection;
   /** The saved section, offered again when its kind is chosen. */
-  base: S | null;
-  onChange: (next: S) => void;
+  base: AdapterSection | null;
+  onChange: (next: AdapterSection) => void;
 }) {
   const scope = useFieldScopeContext();
   const nameId = useId();
   const legendId = useId();
   /** Drafts of other kinds, so switching back keeps what was typed. */
-  const [others, setOthers] = useState<Record<string, S>>({});
-  const developer = use(DeveloperContext);
+  const [others, setOthers] = useState<Record<string, AdapterSection>>({});
+  const developer = useChrome().developer;
   const kinds = offeredKinds(
     adapters,
     developer,
     [value.kind, base?.kind].filter((kind) => kind !== undefined),
   );
-  function switchKind(kind: S['kind']) {
+  function switchKind(kind: string) {
     if (kind === value.kind) return;
     setOthers({ ...others, [value.kind]: value });
     scope.edited(section);

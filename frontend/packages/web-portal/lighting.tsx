@@ -11,67 +11,26 @@ import {
   failureOf,
   same,
   type Failure,
-  type LightingMode,
   type LightingSituation,
   type LightingTarget,
   type TargetReading,
 } from '@prysm/application-client';
-import type { DeviceReport } from '@prysm/contracts/application';
-import type { OutputLighting } from './adapters';
 import {
   lightCardView,
   moodOf,
   pauseOf,
   words,
+  type LightCardFacts,
   type Pause,
 } from './light-card-view';
 
-export interface LightingProps {
-  target: TargetReading;
-  /** What the lights are doing, from the state. */
-  lighting: LightingSituation;
-  /**
-   * What the lights say about themselves while screen sync runs: why they
-   * do not show it, their own brightness, how many LEDs they have. Lights
-   * that don't answer Off or their effects are the situation `unanswered`.
-   */
-  device: DeviceReport;
-  /** How many LEDs Prysm sends: the configured edges' total. */
-  sentLedCount?: number;
-  hasCapture: boolean;
-  hasOutput: boolean;
-  /** What the configured output offers, `null` without an output. */
-  output: OutputLighting | null;
+export interface LightingProps extends LightCardFacts {
   disabled: boolean;
   setTarget: (target: LightingTarget) => Promise<unknown>;
   /** Opens the guided setup; offered while capture or lights are missing. */
   openSetup: () => void;
   /** The screen sync picture controls, under the mode tiles. */
   children?: ReactNode;
-}
-
-/**
- * The mode the power button turns on: a per-browser preference, like the
- * theme. Prysm itself only knows the current target.
- */
-export const modeStorageKey = 'prysm.mode';
-
-function storedMode(): LightingMode {
-  try {
-    return window.localStorage.getItem(modeStorageKey) === 'effects'
-      ? 'effects'
-      : 'screen_sync';
-  } catch {
-    return 'screen_sync';
-  }
-}
-
-function saveMode(mode: LightingMode) {
-  try {
-    window.localStorage.setItem(modeStorageKey, mode);
-  } catch {
-    // Without storage the power button turns on screen sync next time.
-  }
 }
 
 /** Starting is mentioned only once it takes longer than this. */
@@ -93,7 +52,6 @@ function PowerIcon() {
   );
 }
 
-/** Screen sync: a screen with light at its sides. */
 function SyncIcon() {
   return (
     <svg
@@ -140,18 +98,13 @@ function effectsLine(effects: string | undefined) {
  * stream, not the click, decides what is shown as on.
  */
 export function LightCard({
-  target,
-  lighting,
-  device,
-  sentLedCount,
-  hasCapture,
-  hasOutput,
-  output,
   disabled,
   setTarget,
   openSetup,
   children,
+  ...facts
 }: LightingProps) {
+  const { target, control, lighting, hasCapture, hasOutput, output } = facts;
   const [pending, setPending] = useState<LightingTarget | null>(null);
   /**
    * The latest refused click, with the lights as they were then: a command
@@ -167,14 +120,6 @@ export function LightCard({
   // Gone once the lights change, also when they change back.
   if (refusal && (refusal.target !== target || refusal.kind !== lighting.kind))
     setRefusal(null);
-  const error = refusal && { failure: refusal.failure, asked: refusal.asked };
-  const [remembered, setRemembered] = useState(storedMode);
-  // A target newer than this page is no mode to remember.
-  const asksMode = target === 'screen_sync' || target === 'effects';
-  if (asksMode && target !== remembered) setRemembered(target);
-  useEffect(() => {
-    if (target === 'screen_sync' || target === 'effects') saveMode(target);
-  }, [target]);
   const headingId = useId();
   const statusId = useId();
 
@@ -194,26 +139,18 @@ export function LightCard({
   const configured = hasCapture && hasOutput;
   const mood = moodOf(lighting, configured);
   // Switching modes passes through starting: the light stays up meanwhile.
-  const [stayLit, setStayLit] = useState(false);
   const running = mood === 'sync' || mood === 'effects';
-  if (running && !stayLit) setStayLit(true);
-  if (!running && mood !== 'starting' && stayLit) setStayLit(false);
-  const lit = running || (mood === 'starting' && stayLit);
-  // Each time the light comes on (not on load), the ignition plays once. Its
-  // CSS animations alternate between two names, so a new one restarts them
-  // without remounting anything.
-  const [wasLit, setWasLit] = useState(lit);
-  const [ignitions, setIgnitions] = useState(0);
-  if (lit !== wasLit) {
-    setWasLit(lit);
-    if (lit) setIgnitions(ignitions + 1);
+  const [illumination, setIllumination] = useState<{
+    lit: boolean;
+    ignite?: 'a' | 'b';
+  }>({ lit: running });
+  const lit = running || (mood === 'starting' && illumination.lit);
+  let { ignite } = illumination;
+  if (lit !== illumination.lit) {
+    if (lit) ignite = ignite === 'a' ? 'b' : 'a';
+    setIllumination({ lit, ignite });
   }
-  let ignite: 'a' | 'b' | undefined;
-  if (ignitions) ignite = ignitions % 2 ? 'a' : 'b';
 
-  // A pause worth naming, beside the eyebrow (never a line of its own, so
-  // the card keeps its size): only once it lasts, so a normal start says
-  // nothing.
   const pause = pauseOf(lighting, lit);
   const [lasting, setLasting] = useState<Pause | null>(null);
   useEffect(() => {
@@ -238,18 +175,7 @@ export function LightCard({
     info,
     calm,
     ownEffects,
-  } = lightCardView(
-    {
-      target,
-      lighting,
-      device,
-      sentLedCount,
-      hasCapture,
-      hasOutput,
-      output,
-    },
-    { remembered, error, lit, note },
-  );
+  } = lightCardView(facts, { error: refusal, lit, note });
   const locked = disabled || pending !== null;
   // Busy: a click on its way, or the lights starting (not yet lit).
   const ring = useLingering(
@@ -258,7 +184,6 @@ export function LightCard({
     ringHoldMs,
   );
 
-  // Kept while the line folds away, so it leaves as it came.
   const [kept, setKept] = useState(info);
   if (info && !same(info, kept)) setKept(info);
   const shown = info ?? kept;
@@ -273,7 +198,6 @@ export function LightCard({
     {
       value: 'effects',
       label: effects,
-      // Named by the output when it can be: "Patterns from WLED".
       line: effectsLine(output?.effects),
       icon: <EffectsIcon />,
     },
@@ -296,7 +220,6 @@ export function LightCard({
   const shownReasons = new Set<string>();
 
   return (
-    // The frame carries the light's colours, for the card and the LED drawing.
     <div
       className="light-frame"
       data-lit={lit}
@@ -343,14 +266,17 @@ export function LightCard({
                 data-power=""
                 aria-label="Power"
                 aria-pressed={on}
-                aria-busy={pending !== null && (pending === 'off') === on}
+                aria-busy={
+                  control?.busy ||
+                  (pending !== null && (pending === 'off') === on)
+                }
                 data-ring={ring}
                 aria-describedby={
                   powerReason
                     ? `${headingId}-power`
                     : `${statusId} ${headingId}-starts`
                 }
-                disabled={locked || powerReason !== null}
+                disabled={locked || control?.busy || powerReason !== null}
                 data-unavailable={powerReason !== null}
                 onClick={() => void choose(on ? 'off' : mode)}
               >
@@ -380,8 +306,6 @@ export function LightCard({
           </small>
         )}
         {configured ? (
-          // Its space is kept in every state: a problem, a warning or the
-          // calm line cross-fade in it, so nothing below ever moves.
           <div
             className="light-info"
             data-shown={!!info}
@@ -419,7 +343,6 @@ export function LightCard({
                 </p>
               ) : null}
               {shown?.details || shown?.retry ? (
-                // The fix and the details share one row.
                 <div className="light-info-actions">
                   {shown.retry ? (
                     <button
@@ -451,69 +374,74 @@ export function LightCard({
             </button>
           </div>
         )}
-        {configured ? (
+        {configured && on ? (
           <>
             {/* The mode: two option cards, each saying what it does. */}
-            <div
-              className="modes"
-              role="radiogroup"
-              aria-label="Mode"
-              data-mode={chosen ?? undefined}
-              data-on={on}
-            >
-              {tiles.map((tile) => (
-                <button
-                  type="button"
-                  role="radio"
-                  key={tile.value}
-                  className="mode"
-                  data-target={tile.value}
-                  aria-checked={chosen === tile.value}
-                  // With none chosen, the first one takes the focus.
-                  tabIndex={(chosen ?? tiles[0].value) === tile.value ? 0 : -1}
-                  onKeyDown={arrow}
-                  aria-busy={pending === tile.value}
-                  aria-describedby={
-                    reasons[tile.value]
-                      ? `${headingId}-${tile.value}`
-                      : undefined
-                  }
-                  disabled={locked || reasons[tile.value] !== null}
-                  // Only a mode that cannot run looks disabled; a click in flight does not.
-                  data-unavailable={reasons[tile.value] !== null}
-                  onClick={() => {
-                    // Already on and fine: nothing to restart. After a failure it retries.
-                    if (target !== tile.value || lighting.kind === 'failed')
-                      void choose(tile.value);
-                  }}
-                >
-                  {tile.icon}
-                  <span className="mode-name">{tile.label}</span>
-                  <span className="mode-line">{tile.line}</span>
-                </button>
-              ))}
-            </div>
-            {tiles.map(({ value }) => {
-              const reason = reasons[value];
-              if (!reason) return null;
-              const repeated = shownReasons.has(reason);
-              shownReasons.add(reason);
-              return (
-                <small
-                  key={value}
-                  id={`${headingId}-${value}`}
-                  className={repeated ? 'visually-hidden' : 'mode-reason'}
-                >
-                  {reason}
-                </small>
-              );
-            })}
+            {output?.effects && (
+              <div
+                className="modes"
+                role="radiogroup"
+                aria-label="Mode"
+                data-mode={chosen ?? undefined}
+                data-on={on}
+              >
+                {tiles.map((tile) => (
+                  <button
+                    type="button"
+                    role="radio"
+                    key={tile.value}
+                    className="mode"
+                    data-target={tile.value}
+                    aria-checked={chosen === tile.value}
+                    // With none chosen, the first one takes the focus.
+                    tabIndex={
+                      (chosen ?? tiles[0].value) === tile.value ? 0 : -1
+                    }
+                    onKeyDown={arrow}
+                    aria-busy={pending === tile.value}
+                    aria-describedby={
+                      reasons[tile.value]
+                        ? `${headingId}-${tile.value}`
+                        : undefined
+                    }
+                    disabled={locked || reasons[tile.value] !== null}
+                    // Only a mode that cannot run looks disabled; a click in flight does not.
+                    data-unavailable={reasons[tile.value] !== null}
+                    onClick={() => {
+                      // Already on and fine: nothing to restart. After a failure it retries.
+                      if (target !== tile.value || lighting.kind === 'failed')
+                        void choose(tile.value);
+                    }}
+                  >
+                    {tile.icon}
+                    <span className="mode-name">{tile.label}</span>
+                    <span className="mode-line">{tile.line}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {output?.effects &&
+              tiles.map(({ value }) => {
+                const reason = reasons[value];
+                if (!reason) return null;
+                const repeated = shownReasons.has(reason);
+                shownReasons.add(reason);
+                return (
+                  <small
+                    key={value}
+                    id={`${headingId}-${value}`}
+                    className={repeated ? 'visually-hidden' : 'mode-reason'}
+                  >
+                    {reason}
+                  </small>
+                );
+              })}
             {/* Prysm's picture controls: always in place, quiet (and out of
                 reach) while the lights show their own effects. */}
             <div
               className="picture-controls"
               data-quiet={chosen === 'effects'}
-              inert={chosen === 'effects'}
+              inert={chosen !== 'screen_sync'}
             >
               {children}
             </div>

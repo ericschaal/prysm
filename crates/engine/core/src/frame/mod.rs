@@ -51,44 +51,38 @@ impl Display for PixelFormat {
 }
 
 /// Invalid frame geometry, payload length, or fixed-size allocation request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FrameError {
+    #[error("YUYV width must be even, got {0}")]
     OddYuyvWidth(u32),
+    #[error("NV12 width and height must be even, got {width}x{height}")]
     OddNv12Dimensions { width: u32, height: u32 },
+    #[error("frame dimensions exceed the supported buffer size")]
     SizeOverflow,
+    #[error("frame requires {expected} bytes, got {actual}")]
     BufferLength { expected: usize, actual: usize },
 }
 
-impl Display for FrameError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::OddYuyvWidth(width) => write!(f, "YUYV width must be even, got {width}"),
-            Self::OddNv12Dimensions { width, height } => {
-                write!(
-                    f,
-                    "NV12 width and height must be even, got {width}x{height}"
-                )
-            }
-            Self::SizeOverflow => f.write_str("frame dimensions exceed the supported buffer size"),
-            Self::BufferLength { expected, actual } => {
-                write!(f, "frame requires {expected} bytes, got {actual}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for FrameError {}
-
 impl PixelFormat {
-    /// Bytes per stored row and the number of stored rows, counting both NV12
-    /// planes (each NV12 row, luma or chroma, is `width` bytes).
-    /// `None` for sizes beyond `usize`.
-    fn rows(&self, width: u32, height: u32) -> Option<(usize, usize)> {
-        let (width, height) = (width as usize, height as usize);
-        match self {
-            Self::RGB24 | Self::BGR24 => Some((width.checked_mul(3)?, height)),
-            Self::YUYV { .. } => Some((width.checked_mul(2)?, height)),
-            Self::NV12 { .. } => Some((width, height.checked_add(height / 2)?)),
+    /// Bytes per row and number of rows, including both NV12 planes.
+    /// The product fits in an allocation.
+    fn rows(&self, width: u32, height: u32) -> Result<(usize, usize), FrameError> {
+        use FrameError::SizeOverflow;
+        let (w, h) = (width as usize, height as usize);
+        let (row, rows) = match self {
+            Self::RGB24 | Self::BGR24 => (w.checked_mul(3).ok_or(SizeOverflow)?, h),
+            Self::YUYV { .. } if !width.is_multiple_of(2) => {
+                return Err(FrameError::OddYuyvWidth(width));
+            }
+            Self::YUYV { .. } => (w.checked_mul(2).ok_or(SizeOverflow)?, h),
+            Self::NV12 { .. } if !width.is_multiple_of(2) || !height.is_multiple_of(2) => {
+                return Err(FrameError::OddNv12Dimensions { width, height });
+            }
+            Self::NV12 { .. } => (w, h.checked_add(h / 2).ok_or(SizeOverflow)?),
+        };
+        match row.checked_mul(rows) {
+            Some(size) if isize::try_from(size).is_ok() => Ok((row, rows)),
+            _ => Err(SizeOverflow),
         }
     }
 
@@ -96,19 +90,7 @@ impl PixelFormat {
     /// Returns an error for odd YUYV widths, odd NV12 dimensions or dimensions
     /// exceeding the supported buffer size.
     pub fn expected_size(&self, width: u32, height: u32) -> Result<usize, FrameError> {
-        match self {
-            Self::YUYV { .. } if !width.is_multiple_of(2) => {
-                return Err(FrameError::OddYuyvWidth(width));
-            }
-            Self::NV12 { .. } if !width.is_multiple_of(2) || !height.is_multiple_of(2) => {
-                return Err(FrameError::OddNv12Dimensions { width, height });
-            }
-            _ => {}
-        }
-        self.rows(width, height)
-            .and_then(|(row, rows)| row.checked_mul(rows))
-            .filter(|&bytes| isize::try_from(bytes).is_ok())
-            .ok_or(FrameError::SizeOverflow)
+        self.rows(width, height).map(|(row, rows)| row * rows)
     }
 }
 
@@ -288,6 +270,9 @@ mod tests {
             frame: 10,
         };
         let overflow = PayloadError::Geometry(FrameError::SizeOverflow);
+        let cause = std::error::Error::source(&overflow).unwrap();
+        assert_eq!(cause.downcast_ref(), Some(&FrameError::SizeOverflow));
+        assert!(std::error::Error::source(&short).is_none());
         for (data, stride, corrupted, error) in [
             (&bytes[..], 6, true, PayloadError::Corrupted),
             (&bytes[..9], 6, false, short.clone()),
@@ -339,7 +324,6 @@ mod tests {
             (&[0, 1, 2, 3, 4, 5, 6, 7][..], &[8, 9, 10, 11][..])
         );
         assert!(Frame::dummy(2, 2).unwrap().nv12_planes().is_none());
-        // Stride padding is removed from both planes.
         let padded = [1, 2, 9, 3, 4, 9, 5, 6];
         let frame = strided(&padded, 2, 2, format, 3, false).unwrap();
         assert_eq!(frame.as_slice(), [1, 2, 3, 4, 5, 6]);

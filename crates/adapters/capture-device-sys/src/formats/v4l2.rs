@@ -21,7 +21,6 @@ impl Rates {
         if numerator == 0 {
             return;
         }
-        // The nearest whole rate, computed wide enough not to overflow.
         let nearest = (u64::from(denominator) + u64::from(numerator) / 2) / u64::from(numerator);
         if let Ok(fps) = u32::try_from(nearest)
             && (1..=MAX_FPS).contains(&fps)
@@ -68,7 +67,6 @@ mod tests {
 
     #[test]
     fn intervals_give_whole_rates() {
-        // 1/30, 1/25, 2/59 (29.5, not whole), 2/1 (0.5 fps), 0/0.
         assert_eq!(
             spans(|r| {
                 for (n, d) in [(1, 30), (1, 25), (2, 59), (2, 1), (0, 0), (2, 60)] {
@@ -77,7 +75,6 @@ mod tests {
             }),
             [Span::exactly(25), Span::exactly(30)]
         );
-        // A USB card's 100 ns intervals, and a broadcast rate.
         assert_eq!(
             spans(|r| {
                 for (n, d) in [(333_333, 10_000_000), (166_666, 10_000_000), (1001, 24_000)] {
@@ -91,12 +88,9 @@ mod tests {
         assert!(!interval_is(1, 25, 30));
         assert!(!interval_is(0, 0, 30));
         assert!(interval_is(u32::MAX, u32::MAX, 1));
-        // A rate no device lists, against a driver's widest interval.
         assert!(!interval_is(u32::MAX, 1, u32::MAX));
         assert!(!interval_is(u32::MAX, u32::MAX, u32::MAX));
-        // Continuous 1/60 s to 1 s.
         assert_eq!(spans(|r| r.intervals((1, 60), (1, 1), None)), [span(1, 60)]);
-        // Stepwise 1/30 s to 1/10 s in 1/60 s: 2/60 to 6/60, each whole.
         assert_eq!(
             spans(|r| r.intervals((1, 30), (1, 10), Some((1, 60)))),
             [
@@ -109,7 +103,6 @@ mod tests {
         );
         assert_eq!(spans(|r| r.intervals((1, 0), (1, 1), None)), []);
         assert_eq!(spans(|r| r.intervals((1, 30), (1, 1), Some((0, 1)))), []);
-        // Zero minimum interval: up to the listing bound.
         assert_eq!(
             spans(|r| r.intervals((0, 1), (1, 1), None)),
             [span(1, MAX_FPS)]

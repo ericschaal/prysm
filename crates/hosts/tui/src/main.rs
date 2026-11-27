@@ -1,6 +1,6 @@
 //! prysm-tui: the terminal previews what the LEDs show, next to the web portal.
 use prysm_capture_device::DeviceSource;
-use prysm_host::{Program, assets};
+use prysm_host::Program;
 use prysm_ports::{Error, Result, Settings, SettingsStore};
 use prysm_settings_file::SettingsFile;
 use prysm_surface_tui::Tui;
@@ -26,16 +26,11 @@ const _: () = assert!(prysm_host::stops_in_time(
 ));
 
 fn main() -> ExitCode {
-    // A capture-only TV streams to the portal, which hands it to the remote source.
-    let (adapters, tv_stream) = prysm_host::desktop_adapters(DeviceSource);
-    prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
+    prysm_host::main(PROGRAM, DeviceSource, |host, prysm| async move {
         let tui = Tui::new(read_settings, host.terminal());
         let quit = tui.quit();
         let signals = host.signals();
         prysm
-            .surface(host.status())
-            .surface(host.start())
-            .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
             .surface(tui)
             .run(async {
                 tokio::select! {

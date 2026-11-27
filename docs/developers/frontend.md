@@ -32,9 +32,14 @@ settings use the `null` output.
 ## API generation
 
 Rust owns every value the frontend exchanges with Prysm. The exporter writes
-OpenAPI documents and serialisation fixtures; codegen turns them into
-TypeScript under `packages/contracts/generated`, which is checked in. Never
-edit generated files.
+OpenAPI documents and serialization fixtures. The generator uses
+openapi-typescript for types and Ajv for standalone runtime validators.
+The same export supplies enum values to the frontend and Python wire types to the acceptance runner.
+Both use the same schema. Application and Luna readers describe their
+version-compatibility rules in `frontend/scripts/*-reading.mjs`.
+Validate external JSON before passing it to typed code. The portal and TV
+bundles run the generated checks without compiling code in the browser.
+Regenerate `packages/contracts/generated` after changing a contract.
 
 ```sh
 cargo xtask codegen          # after a Rust contract change
@@ -56,10 +61,14 @@ has one reading.
 
 | Where | Field | Newer value read as |
 | --- | --- | --- |
-| State stream (`decodeState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
+| State stream (`readState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
 | | `session.state` | `unknown`, keeping a `failure` or `message` it carries (a malformed failure is dropped) |
 | | `session.failure.kind` | said by its side: an `adapter` failure of its `section`, or else of its `field`'s section (`capture`, `output`); without one, `internal` |
 | | `session.failure.section` | absent, unless `capture` or `output` |
+| | `input.behind` | Prysm cannot keep up, with no step named |
+| | `settings.processing.style.kind` | shown as unknown, with its value retained when saving other settings |
+| HTTP replies | `Failure.kind` | the message and a recognized side when available, otherwise a general refusal or failure |
+| | `Modes.status` | `unknown` |
 | Preview and colors streams | event `type` | skipped |
 | Light card, TV lights card | `device.issue` | "The lights aren’t showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
@@ -78,11 +87,11 @@ event from Prysm. Reload the page.", `invalid_reply`), except the saved
 `capture` and `output` sections: the settings file keeps them as free
 maps, so one that does not validate still arrives (with a failure of
 kind `invalid`). The portal reads each with
-`readSection` (`web-portal/adapters.ts`) before any page sees it: a
-required field (one `create` sets that the kind's `optional` does not name)
-that is missing or of another JSON type is `create`'s, so its editor draws
-and the field can be fixed there; every other field stays as saved, and a
-section with nothing to fill is passed on as it is.
+`readSection` (`web-portal/adapters.ts`) before it reaches an editor or
+summary. An absent or mistyped required field uses the panel's initial value.
+A mistyped optional field, including one LED edge count, is left out so its
+default can be shown. Correctly typed fields and unrecognized fields stay as
+saved. The runtime keeps the original sections for saves to other settings.
 
 What the lights are doing is decided once, by
 `lightingSituation` (`application-client`) from the target and the session

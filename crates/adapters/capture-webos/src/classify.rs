@@ -24,29 +24,9 @@ pub(crate) enum Reason {
     /// one new driver tells, and a second failure with no frame or change
     /// of the video signal between proves it is not that.
     FreshDriver,
-    /// An initialized driver that gets no buffer may be broken the same
-    /// way: one new driver tells. A second stall with no frame or change of
-    /// the video signal between is the TV withholding the picture
-    /// (protected content, say), which only a change of the video ends.
+    /// An initialized driver receives no buffer. A fresh driver can clear
+    /// driver-local state. A second stall requires fresh video evidence.
     StalledDriver,
-}
-
-/// What a [`Reason`]'s retry ends in once its new driver failed too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GiveUp {
-    /// The source fails fast.
-    Fail,
-    /// [`Recovery::Withheld`].
-    Withheld,
-}
-
-impl Reason {
-    pub(crate) fn gives_up(self) -> GiveUp {
-        match self {
-            Self::FreshDriver => GiveUp::Fail,
-            Self::StalledDriver => GiveUp::Withheld,
-        }
-    }
 }
 
 impl Recovery {
@@ -92,14 +72,10 @@ pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
         VideoCause::Native(E::Luna(_)) | VideoCause::Unprepared | VideoCause::SignalMask => {
             Recovery::Escalate(Escalation::FAIL_FAST)
         }
-        // The TV's resource policy took the capture (seen at standby, with
-        // the signal changing in the same instant).
         VideoCause::Native(E::Status {
             operation: O::VtCurrentCaptureBuffInfo,
             code: 12,
         })
-        // No video plane to capture (seen at start while the video is
-        // unknown, and for ever under AirPlay mirroring).
         | VideoCause::Native(E::Status {
             operation: O::VtPlaneInfo,
             code: 13,
@@ -112,8 +88,7 @@ pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
     }
 }
 
-/// What a release that did not confirm escalates as, for either tap: the
-/// driver may still hold the device, which only a new process frees.
+/// Escalation when a native tap fails to confirm release.
 pub(crate) const UNCONFIRMED_RELEASE: Escalation = Escalation::Restart;
 
 /// What the TV UI tap does after a fault. It never fails the source.
@@ -232,10 +207,6 @@ mod tests {
             (device(ErrorKind::NotFound), retry, unsupported),
             (device(ErrorKind::OutOfMemory), retry, may_pass),
         ];
-        // A status code means something only for its operation: 12 of the
-        // buffer is the TV's resource policy taking the capture (seen at
-        // standby), 13 of the plane is no video plane (seen at start and
-        // under AirPlay mirroring). Any other status opens a new driver.
         use sys::Operation as O;
         let withheld = Recovery::Withheld;
         rows.extend([

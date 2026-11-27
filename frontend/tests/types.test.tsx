@@ -4,12 +4,18 @@ import type {
 } from '@prysm/contracts/host-desktop';
 import type { CaptureModesClient } from '@prysm/application-client';
 import type { ApplicationRuntime } from '@prysm/application-state';
-import type { State } from '@prysm/contracts/application';
+import type { ChosenStyle, State } from '@prysm/contracts/application';
 import type {
   Preferences as TvPreferences,
   State as TvState,
 } from '@prysm/contracts/luna';
-import { WebPortal, type AdapterUis } from '@prysm/web-portal';
+import {
+  WebPortal,
+  adapterFor,
+  createSection,
+  readSection,
+  type AdapterUis,
+} from '@prysm/web-portal';
 import { deviceCapture } from '@prysm/capture-device-ui';
 import type { WebosSettings } from '@prysm/contracts/host-webos';
 import { webosCapture } from '@prysm/capture-webos-ui';
@@ -89,36 +95,38 @@ const outputs: AdapterUis<DesktopOutput> = {
   wled: wledOutput,
   null: nullOutput,
 };
+const initialOutput: DesktopOutput = createSection(outputs);
+readSection(outputs, initialOutput);
+const wledPanel = adapterFor(outputs, 'wled');
+wledPanel?.normalize?.(wledOutput.create());
+// @ts-expect-error Looking up WLED cannot produce an editor for the null output.
+wledPanel?.normalize?.(nullOutput.create());
 void [missing, outputs];
 
-// @ts-expect-error The host's typed thunk rejects another adapter's settings.
-device.commands.configureCapture(0, { kind: 'webos', fps: 30 });
-webos.commands.configureCapture(0, {
+// @ts-expect-error The host's command rejects another adapter's settings.
+void device.commands.configureCapture(0, { kind: 'webos', fps: 30 });
+void webos.commands.configureCapture(0, {
   // @ts-expect-error Output settings cannot be submitted as capture settings.
   kind: 'wled',
   address: '192.0.2.1',
   leds: {},
 });
 // @ts-expect-error Revisions are numbers, not decimal strings.
-device.commands.configureOutput('0', {
+void device.commands.configureOutput('0', {
   kind: 'wled',
   address: '192.0.2.1',
   leds: {},
 });
-device.commands.configureProcessing(0, {
+void device.commands.configureProcessing(0, {
   brightness_percent: 80,
   style: { kind: 'natural' },
   sample_density: 128,
   // @ts-expect-error Processing fields are typed.
   remove_black_bars: 'yes',
 });
-device.commands.configureProcessing(0, {
-  brightness_percent: 80,
-  // @ts-expect-error A style is one of the named kinds.
-  style: { kind: 'cinema' },
-  sample_density: 128,
-  remove_black_bars: true,
-});
+// @ts-expect-error A new style choice is one of the named kinds.
+const chosenStyle: ChosenStyle = { kind: 'cinema' };
+void chosenStyle;
 
 // The supervisor's state is one type for both packages, tagged by flavor:
 // each package has only its own fields.

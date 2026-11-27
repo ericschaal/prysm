@@ -1,6 +1,6 @@
 use crate::{
-    AdapterSettings, Error, FrameSource, Hangup, IdleMode, LedOutput, Modes, Result, Section,
-    Settings, ValidationError,
+    AdapterSettings, Error, FrameSource, Hangup, Modes, OpenIntent, OutputObservationState,
+    OutputOpen, Power, Readiness, Result, Section, Settings, ValidationError,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
@@ -23,7 +23,7 @@ pub const SOURCE_OPEN_LIMIT: Duration = Duration::from_secs(13);
 pub trait SourceFactory: Send + Sync + 'static {
     /// Tag in the settings file, such as `"device"` or `"webos"`.
     const KIND: &'static str;
-    type Settings: DeserializeOwned + Serialize;
+    type Settings: DeserializeOwned + Serialize + Send + Sync;
     /// # Errors
     /// Rejects settings that can never open, without touching hardware. The
     /// field is relative to the section, such as `fps`: the registry names
@@ -33,6 +33,29 @@ pub trait SourceFactory: Send + Sync + 'static {
     /// Device or I/O failure, or a size or rate [`Self::modes`] says the
     /// hardware does not deliver.
     fn open(&self, settings: &Self::Settings) -> Result<Box<dyn FrameSource>>;
+    /// Open for an owned attempt, without opening after a pre-existing cut.
+    fn open_for_sync(
+        &self,
+        settings: &Self::Settings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn FrameSource>> {
+        if stop.is_cut() {
+            return Err(Error::adapter("capture open cancelled", crate::Stopping));
+        }
+        self.open(settings)
+    }
+    /// Check current readiness without starting a session.
+    fn check(&self, _settings: &Self::Settings, _stop: &Hangup) -> Readiness<Error> {
+        Readiness::Ready
+    }
+    /// Classify an open or held-handle failure using adapter knowledge.
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        Readiness::Blocked(error)
+    }
+    /// Wait for a relevant readiness change, or return None when cancelled.
+    fn watch(&self, _settings: &Self::Settings, _stop: &Hangup) -> Option<Readiness<Error>> {
+        None
+    }
     /// What this kind finds to choose from, such as the video devices present.
     /// See [`Candidate`]; the default finds nothing.
     fn candidates(&self) -> Vec<Candidate> {
@@ -54,38 +77,47 @@ pub trait SourceFactory: Send + Sync + 'static {
 /// Opens a [`LedOutput`] from typed settings. Opening may block.
 pub trait OutputFactory: Send + Sync + 'static {
     const KIND: &'static str;
-    type Settings: DeserializeOwned + Serialize;
+    type Settings: DeserializeOwned + Serialize + Send + Sync;
     /// # Errors
     /// Rejects settings that can never open, without touching hardware. The
     /// field is relative to the section, such as `address`: the registry
     /// names the section.
     fn validate(&self, settings: &Self::Settings) -> Result<(), ValidationError>;
-    /// Ends at once when `stop` is cut: a session cuts it when it is asked
-    /// to stop, so its stop never waits for an open.
-    ///
-    /// # Errors
-    /// Device or I/O failure, or the cut (a [`Stopping`](crate::Stopping)
-    /// cause), saying whether the device may have taken a request on the
-    /// way ([`OpenFailure`]).
-    fn open(
+    /// Start streaming with the permission carried by this request. Ends
+    /// when `stop` is cut. An open failure records whether its request may
+    /// have reached the device.
+    fn open_for_sync(
         &self,
         settings: &Self::Settings,
+        intent: OpenIntent,
         stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure>;
-    /// Put the device in `mode` without taking it over: what opening it and
-    /// idling at once leaves, for a device nobody holds (lights turned off
-    /// after a released session, or the device's own effects without one).
-    /// The default does just that; a factory that can set the mode alone
-    /// does so, so the device never shows Prysm's colours meanwhile.
-    ///
-    /// # Errors
-    /// Device or I/O failure.
-    fn idle(&self, settings: &Self::Settings, mode: IdleMode) -> Result<()> {
-        let never = Hangup::default();
-        self.open(settings, &never)
-            .map_err(OpenFailure::into_error)?
-            .idle(mode, &never)
+    ) -> Result<OutputOpen, OpenFailure>;
+    /// Check current readiness and optional physical device facts.
+    fn observe(
+        &self,
+        _settings: &Self::Settings,
+        _stop: &Hangup,
+    ) -> (Readiness<Error>, OutputObservationState) {
+        (Readiness::Ready, OutputObservationState::Unsupported)
     }
+    /// Classify an open, held-handle or power failure.
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        Readiness::Blocked(error)
+    }
+    /// Wait for a relevant readiness change, or return None when cancelled.
+    fn watch(
+        &self,
+        _settings: &Self::Settings,
+        _stop: &Hangup,
+    ) -> Option<(Readiness<Error>, OutputObservationState)> {
+        None
+    }
+    /// Whether this output can delegate display to its own effects.
+    fn supports_effects(&self) -> bool {
+        false
+    }
+    /// Power request, independent of releasing a local stream.
+    fn set_power(&self, settings: &Self::Settings, power: Power, stop: &Hangup) -> Result<()>;
     /// What this kind finds to choose from, such as devices on the network.
     /// See [`Candidate`]; the default finds nothing.
     fn candidates(&self) -> Vec<Candidate> {
@@ -121,24 +153,26 @@ impl OpenFailure {
     }
 }
 
-/// Something a factory found that a person can pick instead of typing its
-/// settings: a device present, a device answering on the network.
-///
-/// Finding is an on-request lookup, not state: it blocks, ends within about
-/// two seconds, opens nothing and keeps nothing (no threads, caches or
-/// polling). A factory that cannot look returns nothing.
+/// Something an adapter found that a person can pick instead of typing, one
+/// item of `GET /api/v1/candidates/{section}/{kind}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Candidate {
     /// What a person recognises, such as the device's name.
     pub label: String,
     /// Where it is or what it has, such as `192.168.1.40`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
     pub detail: Option<String>,
     /// How many LEDs a found output device says it has, when it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schema(nullable = false, maximum = 4_294_967_295_u64, example = 120)
+    )]
     pub led_count: Option<u32>,
-    /// The settings fields picking it fills, such as `{ "device": "/dev/video0" }`:
-    /// part of the kind's settings, merged over what the person has.
+    /// The settings fields picking it fills, such as `{ "device": "/dev/video0" }`: part of the kind's settings, merged over what the person has.
+    #[cfg_attr(feature = "schema", schema(additional_properties))]
     pub fields: Map<String, Value>,
 }
 
@@ -182,14 +216,14 @@ impl Registry {
     /// # Panics
     /// If a source of the same kind is already registered.
     pub fn add_source<F: SourceFactory>(&mut self, factory: F) {
-        let previous = self.sources.insert(F::KIND, Arc::new(Source(factory)));
+        let previous = self.sources.insert(F::KIND, Arc::new(factory));
         assert!(previous.is_none(), "duplicate source kind `{}`", F::KIND);
     }
 
     /// # Panics
     /// If an output of the same kind is already registered.
     pub fn add_output<F: OutputFactory>(&mut self, factory: F) {
-        let previous = self.outputs.insert(F::KIND, Arc::new(Output(factory)));
+        let previous = self.outputs.insert(F::KIND, Arc::new(factory));
         assert!(previous.is_none(), "duplicate output kind `{}`", F::KIND);
     }
 
@@ -201,56 +235,35 @@ impl Registry {
     pub fn validate(&self, settings: &Settings) -> Result<()> {
         settings.processing.validate()?;
         if let Some(capture) = &settings.capture {
-            let section = Section::Capture;
-            find(&self.sources, section, &capture.kind)?
-                .validate(capture)
-                .map_err(|error| within(section, error))?;
+            self.source(capture)?;
         }
         if let Some(output) = &settings.output {
-            let section = Section::Output;
-            find(&self.outputs, section, &output.kind)?
-                .validate(output)
-                .map_err(|error| within(section, error))?;
+            self.output(output)?;
         }
         Ok(())
     }
 
-    /// # Errors
-    /// Unknown kind, invalid settings or the factory's open failure.
-    pub fn open_source(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>> {
-        let section = Section::Capture;
-        find(&self.sources, section, &settings.kind)?
-            .open(settings)
-            .map_err(|error| within(section, error))
+    /// Resolve capture settings into a port. All later calls use these typed settings.
+    pub fn source(&self, settings: &AdapterSettings) -> Result<Arc<dyn ConfiguredSource>> {
+        find(&self.sources, Section::Capture, &settings.kind)?
+            .clone()
+            .bind(settings)
+            .map_err(|error| within(Section::Capture, error))
     }
 
-    /// Ends at once when `stop` is cut; see [`OutputFactory::open`].
-    ///
-    /// # Errors
-    /// Unknown kind or invalid settings (the device untouched), or the
-    /// factory's open failure.
-    pub fn open_output(
-        &self,
-        settings: &AdapterSettings,
-        stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
-        let section = Section::Output;
-        find(&self.outputs, section, &settings.kind)
-            .map_err(OpenFailure::Untouched)?
-            .open(settings, stop)
-            .map_err(|failure| failure.map(|error| within(section, error)))
+    /// Resolve output settings without reaching the device.
+    pub fn output(&self, settings: &AdapterSettings) -> Result<Arc<dyn ConfiguredOutput>> {
+        find(&self.outputs, Section::Output, &settings.kind)?
+            .clone()
+            .bind(settings)
+            .map_err(|error| within(Section::Output, error))
     }
 
-    /// Put the configured output in `mode` without opening it; see
-    /// [`OutputFactory::idle`].
-    ///
-    /// # Errors
-    /// Unknown kind, invalid settings or the factory's failure.
-    pub fn idle_output(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()> {
-        let section = Section::Output;
-        find(&self.outputs, section, &settings.kind)?
-            .idle(settings, mode)
-            .map_err(|error| within(section, error))
+    /// A registered capability, independent of whether saved settings are usable.
+    pub fn supports_effects(&self, settings: &AdapterSettings) -> bool {
+        self.outputs
+            .get(settings.kind.as_str())
+            .is_some_and(|factory| factory.supports_effects())
     }
 
     /// What the factory registered for `kind` in `section` finds to choose
@@ -259,6 +272,7 @@ impl Registry {
     /// # Errors
     /// [`Error::Invalid`] (field `<section>.kind`) for a kind not registered
     /// in `section`, or for the processing section, which has no kinds.
+    /// Discovery is on demand. It finishes in about two seconds and retains no open devices, threads, or caches.
     pub fn candidates(&self, section: Section, kind: &str) -> Result<Vec<Candidate>> {
         Ok(match section {
             Section::Capture => find(&self.sources, section, kind)?.candidates(),
@@ -311,29 +325,38 @@ fn find<'a, F: ?Sized>(
     map: &'a BTreeMap<&'static str, Arc<F>>,
     section: Section,
     kind: &str,
-) -> Result<&'a F> {
-    map.get(kind).map(|factory| &**factory).ok_or_else(|| {
+) -> Result<&'a Arc<F>> {
+    map.get(kind).ok_or_else(|| {
         ValidationError::new(format!("{section}.kind"), format!("unknown kind `{kind}`")).into()
     })
 }
 
-trait Erased: Send + Sync {
-    fn validate(&self, settings: &AdapterSettings) -> Result<()>;
-    fn candidates(&self) -> Vec<Candidate>;
+/// Prerequisites and recovery for one immutable adapter configuration.
+pub trait ConfiguredAdapter: Send + Sync {
+    fn observe(&self, stop: &Hangup) -> (Readiness<Error>, OutputObservationState);
+    fn watch(&self, stop: &Hangup) -> Option<(Readiness<Error>, OutputObservationState)>;
+    fn failure(&self, error: Error) -> Readiness<Error>;
 }
 
-trait ErasedSource: Erased {
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>>;
+pub trait ConfiguredSource: ConfiguredAdapter {
+    fn open(&self, stop: &Hangup) -> Result<Box<dyn FrameSource>>;
+}
+
+pub trait ConfiguredOutput: ConfiguredAdapter {
+    fn open(&self, intent: OpenIntent, stop: &Hangup) -> Result<OutputOpen, OpenFailure>;
+    fn set_power(&self, power: Power, stop: &Hangup) -> Result<()>;
+}
+
+trait ErasedSource: Send + Sync {
+    fn bind(self: Arc<Self>, settings: &AdapterSettings) -> Result<Arc<dyn ConfiguredSource>>;
+    fn candidates(&self) -> Vec<Candidate>;
     fn modes(&self, settings: &AdapterSettings) -> Result<Modes>;
 }
 
-trait ErasedOutput: Erased {
-    fn open(
-        &self,
-        settings: &AdapterSettings,
-        stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure>;
-    fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()>;
+trait ErasedOutput: Send + Sync {
+    fn bind(self: Arc<Self>, settings: &AdapterSettings) -> Result<Arc<dyn ConfiguredOutput>>;
+    fn candidates(&self) -> Vec<Candidate>;
+    fn supports_effects(&self) -> bool;
 }
 
 /// The fields as the factory's type; a failure names the field relative to
@@ -354,54 +377,102 @@ fn decode<S: DeserializeOwned>(settings: &AdapterSettings) -> Result<S> {
     })
 }
 
-struct Source<F>(F);
-struct Output<F>(F);
+struct Source<F: SourceFactory> {
+    factory: Arc<F>,
+    settings: F::Settings,
+}
 
-impl<F: SourceFactory> Erased for Source<F> {
-    fn validate(&self, settings: &AdapterSettings) -> Result<()> {
-        Ok(self.0.validate(&decode(settings)?)?)
+struct Output<F: OutputFactory> {
+    factory: Arc<F>,
+    settings: F::Settings,
+}
+
+impl<F: SourceFactory> ErasedSource for F {
+    fn bind(self: Arc<Self>, raw: &AdapterSettings) -> Result<Arc<dyn ConfiguredSource>> {
+        let settings = decode(raw)?;
+        self.validate(&settings)?;
+        Ok(Arc::new(Source {
+            factory: self,
+            settings,
+        }))
     }
     fn candidates(&self) -> Vec<Candidate> {
-        self.0.candidates()
+        SourceFactory::candidates(self)
+    }
+    fn modes(&self, raw: &AdapterSettings) -> Result<Modes> {
+        Ok(SourceFactory::modes(self, &decode(raw)?))
     }
 }
 
-impl<F: SourceFactory> ErasedSource for Source<F> {
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>> {
-        let typed = decode(settings)?;
-        self.0.validate(&typed)?;
-        self.0.open(&typed)
-    }
-    fn modes(&self, settings: &AdapterSettings) -> Result<Modes> {
-        Ok(self.0.modes(&decode(settings)?))
-    }
-}
-
-impl<F: OutputFactory> Erased for Output<F> {
-    fn validate(&self, settings: &AdapterSettings) -> Result<()> {
-        Ok(self.0.validate(&decode(settings)?)?)
+impl<F: OutputFactory> ErasedOutput for F {
+    fn bind(self: Arc<Self>, raw: &AdapterSettings) -> Result<Arc<dyn ConfiguredOutput>> {
+        let settings = decode(raw)?;
+        self.validate(&settings)?;
+        Ok(Arc::new(Output {
+            factory: self,
+            settings,
+        }))
     }
     fn candidates(&self) -> Vec<Candidate> {
-        self.0.candidates()
+        OutputFactory::candidates(self)
+    }
+    fn supports_effects(&self) -> bool {
+        OutputFactory::supports_effects(self)
     }
 }
 
-impl<F: OutputFactory> ErasedOutput for Output<F> {
-    fn open(
-        &self,
-        settings: &AdapterSettings,
-        stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
-        let typed = decode(settings).map_err(OpenFailure::Untouched)?;
-        self.0
-            .validate(&typed)
-            .map_err(|invalid| OpenFailure::Untouched(invalid.into()))?;
-        self.0.open(&typed, stop)
+impl<F: SourceFactory> ConfiguredAdapter for Source<F> {
+    fn observe(&self, stop: &Hangup) -> (Readiness<Error>, OutputObservationState) {
+        let ready = self
+            .factory
+            .check(&self.settings, stop)
+            .map(|err| within(Section::Capture, err));
+        (ready, OutputObservationState::Unsupported)
     }
-    fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()> {
-        let typed = decode(settings)?;
-        self.0.validate(&typed)?;
-        self.0.idle(&typed, mode)
+    fn watch(&self, stop: &Hangup) -> Option<(Readiness<Error>, OutputObservationState)> {
+        let ready = self
+            .factory
+            .watch(&self.settings, stop)?
+            .map(|err| within(Section::Capture, err));
+        Some((ready, OutputObservationState::Unsupported))
+    }
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        self.factory.failure(error)
+    }
+}
+
+impl<F: SourceFactory> ConfiguredSource for Source<F> {
+    fn open(&self, stop: &Hangup) -> Result<Box<dyn FrameSource>> {
+        self.factory
+            .open_for_sync(&self.settings, stop)
+            .map_err(|err| within(Section::Capture, err))
+    }
+}
+
+impl<F: OutputFactory> ConfiguredAdapter for Output<F> {
+    fn observe(&self, stop: &Hangup) -> (Readiness<Error>, OutputObservationState) {
+        let (ready, facts) = self.factory.observe(&self.settings, stop);
+        (ready.map(|err| within(Section::Output, err)), facts)
+    }
+    fn watch(&self, stop: &Hangup) -> Option<(Readiness<Error>, OutputObservationState)> {
+        let (ready, facts) = self.factory.watch(&self.settings, stop)?;
+        Some((ready.map(|err| within(Section::Output, err)), facts))
+    }
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        self.factory.failure(error)
+    }
+}
+
+impl<F: OutputFactory> ConfiguredOutput for Output<F> {
+    fn open(&self, intent: OpenIntent, stop: &Hangup) -> Result<OutputOpen, OpenFailure> {
+        self.factory
+            .open_for_sync(&self.settings, intent, stop)
+            .map_err(|f| f.map(|e| within(Section::Output, e)))
+    }
+    fn set_power(&self, power: Power, stop: &Hangup) -> Result<()> {
+        self.factory
+            .set_power(&self.settings, power, stop)
+            .map_err(|e| within(Section::Output, e))
     }
 }
 
@@ -432,6 +503,29 @@ mod tests {
     /// Where decoding stopped, under the section: the section alone when
     /// the section as a whole is at fault.
     #[test]
+    fn candidates_omit_optional_details_and_round_trip_adapter_fields() {
+        let fields = serde_json::json!({ "device": "/dev/video0" });
+        let bare = Candidate::new("USB", &fields);
+        let detailed = bare.clone().detail("screen").led_count(120);
+        for (candidate, expected) in [
+            (
+                bare,
+                serde_json::json!({ "label": "USB", "fields": fields }),
+            ),
+            (
+                detailed,
+                serde_json::json!({ "label": "USB", "fields": fields, "detail": "screen", "led_count": 120 }),
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(&candidate).unwrap(), expected);
+            assert_eq!(
+                serde_json::from_value::<Candidate>(expected).unwrap(),
+                candidate
+            );
+        }
+    }
+
+    #[test]
     fn undecodable_fields_are_named_under_their_section() {
         let mut registry = Registry::default();
         registry.add_source(Strict);
@@ -449,7 +543,7 @@ mod tests {
             };
             let validated = registry.validate(&settings).unwrap_err();
             let modes = registry.capture_modes(&capture).unwrap_err();
-            let opened = registry.open_source(&capture).err().unwrap();
+            let opened = registry.source(&capture).err().unwrap();
             [validated, modes, opened].map(|error| match error {
                 Error::Decode { kind, field, .. } if kind == Strict::KIND => field,
                 other => panic!("not a decode error: {other:?}"),

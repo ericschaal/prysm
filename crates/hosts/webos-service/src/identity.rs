@@ -141,7 +141,6 @@ mod tests {
             full.layout.hook,
             Path::new("/var/lib/webosbrew/init.d/io.github.ericschaal.prysm")
         );
-        // Everything but the build-time flavor is shared.
         assert_eq!(
             Identity {
                 flavor: Flavor::Full,

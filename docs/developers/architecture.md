@@ -137,22 +137,14 @@ between frames, and the colours do not depend on the thread count. On the
 TV two threads take a 640x360 frame from 11 to 7 ms
 ([decision](decisions/2026-11-14-parallel-sampling.md)).
 
-The output is opened at the first frame, not when lighting starts, so a source
-without video never takes WLED over. After 3 s without frames the output is
-idled to the device's own state and reopened at the next frame. An open the
-lights do not answer keeps the session running: it reports `unreachable` and
-tries again at a frame every 5 s
-([error handling](error-handling.md#rules)); any other output failure ends
-the session. An output
-nobody holds (released, or `effects` without a session) is put in
-another idle mode without being opened (`OutputFactory::idle`): WLED is
-switched off, or to its effects, without entering live mode first. Lights
-that do not answer that request get the same rule without a session: the
-target stays, the session is `unanswered`, `device.issue` is
-`unreachable`, and the engine tries the request again every 5 s until they
-answer. While a
-session runs the engine measures, once a second, the frame rate, whether
-frames arrive and the mean latency per link (`State.input`).
+Screen sync starts when both adapters report Ready. The session opens
+capture, then the output. Initialization can finish before the first frame
+arrives. After a quiet spell the output releases its display until frames
+resume. A lost handle ends the session. The runtime checks the required
+adapters after release and restarts only when the current intent allows it.
+A state-owned monitor reports recovery while an adapter is Waiting.
+The engine measures frame rate, picture availability and latency once a
+second while a session runs (`State.input`).
 
 Preview and LED-colour streams are demand-driven: with no viewer, the session
 publishes nothing and nothing is encoded. See
@@ -160,27 +152,15 @@ publishes nothing and nothing is encoded. See
 
 ## Shutdown ordering
 
-A session ends in one order on every path, including failures: set the stop
-flag, leave the loop, close the source, idle the output, join the thread. The
-output's `idle` is the failure compensation: off for `off`, the device's own
-effects for `effects`. After the join no frame is in flight.
+One session owner orders stop, source close, output release and thread join.
+It chooses the output action from the current intent when release is due.
+Screen sync failure attempts Off. A handoff to Effects preserves the
+device's display. Explicit Off is attempted once. Superseded commands
+cannot issue a late Off against a new mode.
 
-A session that ends on its own (a failure, or a source that ended) idles its
-output off, or in a stop's mode once a stop has asked. A request or
-shutdown that arrives after its loop ended is handled after that end,
-whichever the engine saw first: the same reply, state, failure and saved
-settings. A session that ends on its own while a request is stopping it
-ended while being stopped: stopped for `off`, the reply is its failures,
-then the output's (the lights may not be off); stopped for the lights' own
-effects, the effects replace it, so its failure is logged and the reply is
-whether the effects came on. A restart (new capture or output settings)
-replaces the old session the same way: the old output's idle failure is
-logged, and the reply is the new session's start. The thread idles in that mode itself when the stop asked
-before it idled; otherwise the session sets it after the join through its
-own output (not over a source whose release is unconfirmed): a second idle
-happens only when the thread idled before the stop asked. An
-ended source turns a `screen_sync` target `off`, so lighting does not restart
-until asked again.
+A source that ends normally clears Screen sync. A worker that crashes
+after initialization can restart when cleanup is confirmed. A crash during
+initialization stops automatic attempts.
 
 The engine joins with a deadline (10 s in the desktop hosts), and gives a
 late idle after an own end the same deadline. A session that does not finish

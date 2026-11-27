@@ -14,52 +14,52 @@ function Choice({
   detail,
   action,
 }: {
-  id?: string;
+  id: string;
   title: string;
-  detail?: string;
+  detail: string;
   action: () => void;
 }) {
   return (
     <button id={id} type="button" className="choice" onClick={action}>
       <span className="choice-name">{title}</span>
-      {detail ? <span className="choice-detail">{detail}</span> : null}
+      <span className="choice-detail">{detail}</span>
     </button>
   );
 }
 
 /** A text field committed with OK on the keyboard or the button beside Cancel. */
 function AddressForm({
-  id,
-  label,
-  initial,
-  placeholder,
-  apply,
-  button,
-  cancel,
+  address,
+  save,
+  close,
 }: {
-  id: string;
-  label: string;
-  initial: string;
-  placeholder: string;
-  apply: (text: string) => string | null;
-  button: string;
-  cancel: () => void;
+  address: string | null;
+  save: (address: string | null) => void;
+  close: () => void;
 }) {
-  const [text, setText] = useState(initial);
+  const id = 'prysm-address-input';
+  const [text, setText] = useState(() => (address ? shown(address) : ''));
   const [error, setError] = useState<string | null>(null);
   function submit(event: FormEvent) {
     event.preventDefault();
-    setError(apply(text));
+    const result = prysmAddress(text);
+    if ('error' in result) {
+      setError(result.error);
+      return;
+    }
+    save(result.value);
+    close();
+    setError(null);
   }
   return (
     <form onSubmit={submit} noValidate>
-      <label htmlFor={id}>{label}</label>
+      <label htmlFor={id}>Address</label>
       <input
         id={id}
         type="text"
         inputMode="url"
         value={text}
-        placeholder={placeholder}
+        placeholder="192.168.1.20"
         spellCheck={false}
         autoComplete="off"
         autoCapitalize="off"
@@ -67,7 +67,6 @@ function AddressForm({
         aria-describedby={error ? `${id}-error` : undefined}
         onChange={(event) => setText(event.target.value)}
       />
-      {/* Always a line, so the buttons never move when an error comes. */}
       {error ? (
         <p id={`${id}-error`} className="notice error" role="alert">
           {error}
@@ -77,13 +76,13 @@ function AddressForm({
       )}
       <div className="dialog-actions" data-row="form">
         <button id={`${id}-apply`} type="submit" className="primary">
-          {button}
+          Use this address
         </button>
         <button
           id="dialog-back"
           type="button"
           className="tonal"
-          onClick={cancel}
+          onClick={close}
         >
           Cancel
         </button>
@@ -113,9 +112,9 @@ export function Dialogs({
   dismiss: () => void;
   onExit: () => void;
 }) {
-  let title = '';
-  let description = '';
-  let content: ReactNode = null;
+  let title: string;
+  let description: string;
+  let content: ReactNode;
   /** The buttons along the bottom; a list dialog has Back alone. */
   let actions: ReactNode = (
     <button
@@ -134,22 +133,11 @@ export function Dialogs({
         'The address you open Prysm’s web portal with on your computer, such as 192.168.1.20.';
       content = (
         <AddressForm
-          id="prysm-address-input"
-          label="Address"
-          initial={tv.draft.prysm_address ? shown(tv.draft.prysm_address) : ''}
-          placeholder="192.168.1.20"
-          button="Use this address"
-          cancel={closeDialog}
-          apply={(text) => {
-            const result = prysmAddress(text);
-            if ('error' in result) return result.error;
-            setPrysmAddress(result.value);
-            closeDialog();
-            return null;
-          }}
+          address={tv.draft.prysm_address}
+          save={setPrysmAddress}
+          close={closeDialog}
         />
       );
-      // The form has its own buttons, under the field.
       actions = null;
       break;
     case 'service':
@@ -197,14 +185,13 @@ export function Dialogs({
       title = 'Remove service setup?';
       description =
         'Capture stops and the service is removed with its autostart and permissions. Your settings are kept; set it up again from Service options.';
-      // Two answers and no third Back button: the Back key keeps the setup.
       actions = (
         <>
           <button
             id="keep-setup"
             type="button"
             className="tonal"
-            onClick={() => openDialog('service')}
+            onClick={closeDialog}
           >
             Keep setup
           </button>

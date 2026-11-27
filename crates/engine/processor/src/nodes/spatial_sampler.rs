@@ -6,7 +6,6 @@ use prysm_core::{
     ColorStrip, Config, Edge, EdgeColors, LinearColor, PIXEL_BUDGET, SampleDensity,
     SpatialReachPercent,
 };
-use std::ops::Range;
 
 mod color_focus;
 
@@ -27,26 +26,15 @@ pub(crate) fn lattice_step(width: u32, height: u32) -> u32 {
 /// and keeps only what they and the picture size determine.
 #[derive(Debug, Default)]
 pub struct SpatialSampler {
-    /// What the geometry below is built for; `None` before the first frame.
-    built_for: Option<GeometryKey>,
-    step: u32,
-    // Cell rectangles `[x0, y0, x1, y1]`, row by row, `columns` to a row.
-    cells: Vec<[u32; 4]>,
-    columns: usize,
+    geometry: Geometry,
     cell_colors: Vec<LinearColor>,
-    // The kernel radius in pixels, and where each output sample sits on the
-    // picture's edge, in strip order.
-    radius: f32,
-    sample_points: [Vec<[f32; 2]>; 4],
-    // One row of normalized cell weights per output sample, in strip order.
-    sample_weights: [Vec<f32>; 4],
     focus: ColorFocus,
     // Every edge's output samples in strip order, reused from frame to frame.
     samples: Vec<LinearColor>,
 }
 
 /// Everything the sampler's geometry depends on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct GeometryKey {
     width: u32,
     height: u32,
@@ -54,15 +42,29 @@ struct GeometryKey {
     reach: SpatialReachPercent,
 }
 
-/// The sampler's geometry, as the colour focus pass reads it.
-struct Geometry<'a> {
-    width: u32,
-    height: u32,
-    cells: &'a [[u32; 4]],
+impl GeometryKey {
+    /// Positions in the same top, right, bottom, left order as the output strips.
+    fn sample_points(self, counts: [usize; 4]) -> impl Iterator<Item = [f32; 2]> {
+        [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left]
+            .into_iter()
+            .zip(counts)
+            .flat_map(move |(edge, count)| {
+                (0..count).map(move |i| sample_point(edge, i, count, self.width, self.height))
+            })
+    }
+}
+
+/// Cells in row order, and one contiguous row of weights for every sample
+/// along the perimeter (top, right, bottom, left).
+#[derive(Debug, Default)]
+struct Geometry {
+    key: GeometryKey,
+    step: u32,
+    cells: Vec<[u32; 4]>,
     columns: usize,
     radius: f32,
-    points: &'a [Vec<[f32; 2]>; 4],
-    weights: &'a [Vec<f32>; 4],
+    counts: [usize; 4],
+    weights: Vec<f32>,
 }
 
 /// The kernel's broad tail at a squared distance in radii: it carries the scene.
@@ -169,52 +171,20 @@ fn project(colors: &[LinearColor], rows: &[f32], out: &mut [LinearColor]) {
     }
 }
 
-/// The parts of a chunk of the run of all edges' samples (edges in strip
-/// order, `counts[edge]` samples each) that starts at sample `offset` and
-/// holds `len`: for each edge it overlaps, the edge, the part's samples
-/// within the edge, and within the chunk.
-fn edge_parts(
-    counts: [usize; 4],
-    offset: usize,
-    len: usize,
-) -> impl Iterator<Item = (usize, Range<usize>, Range<usize>)> {
-    let ends = counts.into_iter().scan(0, |end, count| {
-        *end += count;
-        Some(*end)
-    });
-    ends.zip(counts)
-        .enumerate()
-        .filter_map(move |(edge, (end, count))| {
-            let start = end - count;
-            let (first, last) = (offset.max(start), (offset + len).min(end));
-            (first < last).then(|| {
-                (
-                    edge,
-                    first - start..last - start,
-                    first - offset..last - offset,
-                )
-            })
-        })
-}
-
-impl SpatialSampler {
+impl Geometry {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::cast_sign_loss,
         reason = "grid coordinates are bounded by u32 dimensions; weights use approximate f32 geometry"
     )]
-    fn prepare_geometry(&mut self, key: GeometryKey) {
+    fn build(&mut self, key: GeometryKey) {
         let GeometryKey {
             width,
             height,
             density,
             reach,
         } = key;
-        // A picture larger than the budget gets the samples and the grid of
-        // its copy scaled down to the budget, so cells hold about as many read
-        // pixels, and the weights and projection cost the same, at any
-        // capture size.
         let [horizontal, vertical] = density.samples_for_picture(width, height);
         let [columns, rows] = density.grid_size(width, height);
         self.cells.clear();
@@ -228,39 +198,31 @@ impl SpatialSampler {
                 ]);
             }
         }
-        self.cell_colors
-            .resize(self.cells.len(), LinearColor::black());
         self.columns = columns as usize;
         let radius = height as f32 * reach.as_ratio();
         self.radius = radius;
-        let edges = self.sample_weights.iter_mut().zip(&mut self.sample_points);
-        for ((weights, points), (edge, count)) in edges.zip([
-            (Edge::Top, horizontal),
-            (Edge::Right, vertical),
-            (Edge::Bottom, horizontal),
-            (Edge::Left, vertical),
-        ]) {
-            weights.clear();
-            points.clear();
-            points.extend((0..count).map(|i| sample_point(edge, i, count, width, height)));
-            for &point in points.iter() {
-                let start = weights.len();
-                weights.extend(self.cells.iter().map(|&cell| {
-                    let distance_squared = distance_squared(cell, point, radius);
-                    cell_area(cell) * (broad_tail(distance_squared) + local_lobe(distance_squared))
-                }));
-                // Geometry-only normalization keeps black and small highlights proportional.
-                let total: f64 = weights[start..].iter().map(|&w| f64::from(w)).sum();
-                for weight in &mut weights[start..] {
-                    *weight = (f64::from(*weight) / total) as f32;
-                }
+        self.counts = [horizontal, vertical, horizontal, vertical];
+        self.weights.clear();
+        let samples = self.counts.iter().sum::<usize>();
+        self.weights.reserve_exact(samples * self.cells.len());
+        for point in key.sample_points(self.counts) {
+            let start = self.weights.len();
+            self.weights.extend(self.cells.iter().map(|&cell| {
+                let distance_squared = distance_squared(cell, point, radius);
+                cell_area(cell) * (broad_tail(distance_squared) + local_lobe(distance_squared))
+            }));
+            let row = &mut self.weights[start..];
+            let total: f64 = row.iter().map(|&w| f64::from(w)).sum();
+            for weight in row {
+                *weight = (f64::from(*weight) / total) as f32;
             }
         }
-        self.focus.invalidate();
         self.step = lattice_step(width, height);
-        self.built_for = Some(key);
+        self.key = key;
     }
+}
 
+impl SpatialSampler {
     /// Reduces `view` to edge colours with `config`'s density, reach and
     /// colour focus. Cells, projected samples and colour focus samples are
     /// each independent of the others, so `workers` may compute them in
@@ -283,10 +245,16 @@ impl SpatialSampler {
             density: config.sample_density,
             reach: config.spatial_reach_percent,
         };
-        if self.built_for != Some(key) {
-            self.prepare_geometry(key);
+        let geometry = &mut self.geometry;
+        if geometry.key != key {
+            geometry.build(key);
+            self.cell_colors
+                .resize(geometry.cells.len(), LinearColor::black());
+            self.samples
+                .resize(geometry.counts.iter().sum(), LinearColor::black());
+            self.focus.invalidate();
         }
-        let (cells, step) = (&self.cells, self.step);
+        let (cells, step) = (&geometry.cells, geometry.step);
         workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, colors| {
             for (color, &[x0, y0, x1, y1]) in colors.iter_mut().zip(&cells[offset..]) {
                 *color = view.average_linear_every(x0, y0, x1, y1, step);
@@ -296,46 +264,28 @@ impl SpatialSampler {
 
         // The samples of all four edges, in strip order, as one run; each
         // sample's weighted mean is independent of the others.
-        let (colors, weights) = (&self.cell_colors, &self.sample_weights);
+        let (colors, weights) = (&self.cell_colors, &geometry.weights);
         let cell_count = colors.len();
-        let counts = self.sample_points.each_ref().map(Vec::len);
         let samples = &mut self.samples;
-        samples.clear();
-        samples.resize(counts.iter().sum(), LinearColor::black());
         workers.for_each_chunk(samples, PROJECTION_CHUNK, |offset, chunk| {
-            for (edge, rows, out) in edge_parts(counts, offset, chunk.len()) {
-                let rows = &weights[edge][rows.start * cell_count..rows.end * cell_count];
-                let groups = chunk[out]
-                    .chunks_mut(GROUP)
-                    .zip(rows.chunks(GROUP * cell_count));
-                groups.for_each(|(out, rows)| project(colors, rows, out));
+            let rows = &weights[offset * cell_count..];
+            for (out, rows) in chunk.chunks_mut(GROUP).zip(rows.chunks(GROUP * cell_count)) {
+                project(colors, rows, out);
             }
         });
         mark(Stage::Projection);
 
         let focus = config.color_focus_percent.as_ratio();
         if focus > 0.0 {
-            let geometry = Geometry {
-                width,
-                height,
-                cells: &self.cells,
-                columns: self.columns,
-                radius: self.radius,
-                points: &self.sample_points,
-                weights: &self.sample_weights,
-            };
-            self.focus.prepare_frame(&geometry, &self.cell_colors);
-            let focus_pass = &self.focus;
+            self.focus.prepare_frame(geometry, &self.cell_colors);
             workers.for_each_chunk(samples, FOCUS_CHUNK, |offset, chunk| {
-                for (edge, rows, out) in edge_parts(counts, offset, chunk.len()) {
-                    focus_pass.refine(edge, rows.start, focus, &mut chunk[out]);
-                }
+                self.focus.refine(offset, focus, chunk);
             });
             mark(Stage::ColorFocus);
         }
 
         let mut rest = samples.iter().copied();
-        let [top, right, bottom, left] = counts.map(|count| {
+        let [top, right, bottom, left] = geometry.counts.map(|count| {
             ColorStrip::new(rest.by_ref().take(count).collect()).expect("sample count is nonzero")
         });
         EdgeColors::new(top, right, bottom, left)
@@ -390,7 +340,7 @@ mod tests {
                 density: self.config.sample_density,
                 reach: self.config.spatial_reach_percent,
             };
-            self.sampler.prepare_geometry(key);
+            self.sampler.geometry.build(key);
         }
     }
 
@@ -527,14 +477,18 @@ mod tests {
         };
         let output = sampler.process(&view);
         let cells: Vec<_> = sampler
+            .geometry
             .cells
             .iter()
             .map(|&[x0, y0, x1, y1]| view.average_linear(x0, y0, x1, y1))
             .collect();
         assert_eq!(sampler.cell_colors, cells);
-        for (strip, weights) in strips(&output).into_iter().zip(&sampler.sample_weights) {
-            let reference: Vec<_> = weights
-                .chunks_exact(cells.len())
+        let mut rows = sampler.geometry.weights.chunks_exact(cells.len());
+        for (strip, count) in strips(&output).into_iter().zip(sampler.geometry.counts) {
+            assert_eq!(strip.len(), count);
+            let reference: Vec<_> = rows
+                .by_ref()
+                .take(strip.len())
                 .map(|row| {
                     let sum = |channel: fn(&LinearColor) -> f32| {
                         cells
@@ -546,6 +500,7 @@ mod tests {
                     LinearColor::new(sum(|c| c.r), sum(|c| c.g), sum(|c| c.b))
                 })
                 .collect();
+            assert_eq!(reference.len(), count);
             // Blocks of cells are summed in f32, so the sums agree to rounding.
             for (actual, expected) in strip.resample(strip.len()).into_iter().zip(reference) {
                 for (a, e) in [actual.r, actual.g, actual.b]
@@ -556,21 +511,7 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn edge_parts_split_a_chunk_of_the_run_at_edge_boundaries() {
-        let parts = |offset, len| edge_parts([3, 2, 0, 4], offset, len).collect::<Vec<_>>();
-        assert_eq!(
-            parts(0, 9),
-            [(0, 0..3, 0..3), (1, 0..2, 3..5), (3, 0..4, 5..9)]
-        );
-        assert_eq!(
-            parts(2, 4),
-            [(0, 2..3, 0..1), (1, 0..2, 1..3), (3, 0..1, 3..4)]
-        );
-        assert_eq!(parts(6, 2), [(3, 1..3, 0..2)]);
-        assert!(parts(9, 0).is_empty());
+        assert!(rows.next().is_none());
     }
 
     #[test]
@@ -605,16 +546,15 @@ mod tests {
     fn large_pictures_are_read_on_the_lattice_and_use_the_budget_sized_grid() {
         let mut sampler = Configured::new(SampleDensity(128), 10);
         let _ = sampler.process(&picture(1280, 720, |_, _| [0; 3]));
-        assert_eq!(sampler.step, 2);
+        assert_eq!(sampler.geometry.step, 2);
         let mut small = Configured::new(SampleDensity(128), 10);
         let _ = small.process(&picture(640, 360, |_, _| [0; 3]));
-        assert_eq!(small.step, 1);
+        assert_eq!(small.geometry.step, 1);
         assert_eq!(
-            sampler.cells.len(),
-            small.cells.len(),
+            sampler.geometry.cells.len(),
+            small.geometry.cells.len(),
             "the grid of 640x360"
         );
-        // Each cell averages exactly its lattice pixels.
         let view = picture(1280, 720, |x, y| {
             [
                 (x * 7).to_le_bytes()[0],
@@ -623,7 +563,8 @@ mod tests {
             ]
         });
         let _ = sampler.process(&view);
-        for (&[x0, y0, x1, y1], &actual) in sampler.cells.iter().zip(&sampler.cell_colors) {
+        for (&[x0, y0, x1, y1], &actual) in sampler.geometry.cells.iter().zip(&sampler.cell_colors)
+        {
             let mut sum = [0.0_f64; 3];
             let mut count = 0.0;
             for y in (y0..y1).step_by(2) {
@@ -647,24 +588,23 @@ mod tests {
         large.prepare(3840, 2160);
         let mut budget = Configured::new(density, 10);
         budget.prepare(640, 360);
-        let lengths = |sampler: &Configured| sampler.sample_weights.each_ref().map(Vec::len);
-        assert_eq!(lengths(&large), lengths(&budget));
+        assert_eq!(large.geometry.counts, budget.geometry.counts);
+        assert_eq!(large.geometry.weights.len(), budget.geometry.weights.len());
         // At most one sample per grid cell along each edge: 2 x (128 + 72)
         // samples of 128 x 72 cells, 15 MB of weights.
-        assert!(lengths(&budget).iter().sum::<usize>() <= 400 * 9216);
-        let samples = |sampler: &Configured| sampler.sample_points.each_ref().map(Vec::len);
-        assert_eq!(samples(&budget), [128, 72, 128, 72]);
-        // A picture within the budget's area but not its shape.
+        assert!(budget.geometry.weights.len() <= 400 * 9216);
+        assert_eq!(budget.geometry.counts, [128, 72, 128, 72]);
         let mut sliver = Configured::new(density, 10);
         sliver.prepare(230_400, 1);
-        assert_eq!(samples(&sliver), [128, 1, 128, 1]);
-        assert_eq!((sliver.cells.len(), sliver.columns), (128, 128));
+        assert_eq!(sliver.geometry.counts, [128, 1, 128, 1]);
+        assert_eq!(
+            (sliver.geometry.cells.len(), sliver.geometry.columns),
+            (128, 128)
+        );
     }
 
     #[test]
     fn a_doubled_picture_lights_exactly_like_the_original() {
-        // The lattice reads one pixel of each 2x2 block of a doubled picture,
-        // and the same density gives both the same samples and the same grid.
         let pixel = |x: u32, y: u32| {
             if x < 200 && y < 180 {
                 [255, 64, 0]
@@ -777,7 +717,6 @@ mod tests {
                 for (i, color) in values.iter().enumerate() {
                     assert_eq!(color.r > color.b, i < values.len() / 2);
                 }
-                // Adjacent outputs must transition gradually, including near the corners.
                 assert!(
                     strip
                         .resample(128)

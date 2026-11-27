@@ -88,7 +88,6 @@ fn main() -> ExitCode {
     let cli: Cli = worker::args(NAME, ABOUT);
     match cli.check {
         Some(Check::CheckEncoder(options)) => check::main(options),
-        // Without a subcommand clap requires --prysm.
         None => worker::main(NAME, stdio, cli.worker.expect("--prysm is required"), run),
     }
 }
@@ -123,9 +122,12 @@ async fn run(args: SlimArgs, link: Link) -> Result<()> {
     });
     let video = VideoSignal::default();
     let capture = WebosCapture::new(video.clone());
-    let source = RequestedCapture::new(flow.clone(), link.stop.clone(), move |settings| {
-        Ok(Box::new(capture.start(&settings)?) as Box<dyn FrameSource>)
-    });
+    let source = RequestedCapture::new(
+        flow.clone(),
+        link.stop.clone(),
+        video.clone(),
+        move |settings| Ok(Box::new(capture.start(&settings)?) as Box<dyn FrameSource>),
+    );
     let stopped = {
         let stop = link.stop.stopped();
         async move {

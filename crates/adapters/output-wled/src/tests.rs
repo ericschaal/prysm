@@ -1,14 +1,13 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
-use crate::http::{self, RequestError, TIMEOUT};
+use crate::http::{self, RequestError};
 use crate::observe::{EVERY, Observer, REPLY};
-use crate::output::NotTurnedOff;
 use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
-    AdapterSettings, DeviceBrightness, Error, Hangup, IdleMode, LedOutput, OpenFailure,
-    OutputFactory, OutputIssue, Registry,
+    AdapterSettings, DeviceBrightness, Error, Hangup, IdleMode, LedOutput, OpenFailure, OpenIntent,
+    OutputFactory, OutputIssue, OutputOpen, OutputRelease, Power, Registry,
 };
 use prysm_ports::{Escalation, Fix};
 use prysm_testkit::eventually;
@@ -102,6 +101,7 @@ impl Device {
     fn observer_with_config(&self) -> Observer {
         Observer::new(
             self.http(),
+            self.udp.local_addr().unwrap(),
             &self.address("127.0.0.1"),
             Duration::ZERO,
             Instant::now(),
@@ -164,8 +164,7 @@ impl Device {
     }
 
     fn open_with(&self, leds: LedCounts, dither: bool) -> Result<Box<dyn LedOutput>, Error> {
-        self.wled
-            .open(&self.settings(leds, dither), &Hangup::default())
+        open_explicit(&self.wled, &self.settings(leds, dither), &Hangup::default())
             .map_err(OpenFailure::into_error)
     }
 
@@ -222,11 +221,22 @@ fn read_request(socket: &mut impl Read) -> (String, Value) {
     )
 }
 
+fn open_explicit(
+    wled: &Wled,
+    settings: &WledSettings,
+    stop: &Hangup,
+) -> Result<Box<dyn LedOutput>, OpenFailure> {
+    match wled.open_for_sync(settings, OpenIntent::Explicit, stop)? {
+        OutputOpen::Streaming(output) => Ok(output),
+        OutputOpen::Handoff(_) => panic!("explicit open cannot hand off"),
+    }
+}
+
 fn live() -> Value {
-    json!({"on": true, "lor": 0, "live": true, "tt": 0})
+    json!({"on": true, "lor": 0, "tt": 0})
 }
 fn off() -> Value {
-    json!({"live": false, "on": false, "lor": 2, "tt": 0})
+    json!({"live": false, "on": false, "tt": 0})
 }
 fn one_each() -> LedCounts {
     LedCounts {
@@ -256,7 +266,7 @@ fn request_error(error: &Error) -> &RequestError {
 }
 
 #[test]
-fn open_through_the_registry_enters_live_mode() {
+fn open_through_the_registry_prepares_ddp() {
     let device = Device::new(vec![Reply::Json(OK)]);
     let mut registry = Registry::default();
     registry.add_output(Wled::local(device.udp.local_addr().unwrap().port()));
@@ -268,7 +278,11 @@ fn open_through_the_registry_enters_live_mode() {
             dither: true,
         },
     );
-    let _output = registry.open_output(&settings, &Hangup::default()).unwrap();
+    let _output = registry
+        .output(&settings)
+        .unwrap()
+        .open(OpenIntent::Explicit, &Hangup::default())
+        .unwrap();
     device.expect(&[live()]);
 }
 
@@ -291,40 +305,6 @@ fn write_sends_ddp_clockwise_from_bottom_left() {
     );
     output.write(&EdgeColors::default()).unwrap();
     assert_eq!(device.rgb(), [0; 12]);
-}
-
-#[test]
-fn idle_off_and_native_set_the_idle_state() {
-    for (mode, state) in [
-        (IdleMode::Off, off()),
-        (
-            IdleMode::Native,
-            json!({"live": false, "on": true, "lor": 2, "tt": 0}),
-        ),
-    ] {
-        let device = Device::new(vec![Reply::Json(OK); 2]);
-        let output = device.open(one_each()).unwrap();
-        output.idle(mode, &Hangup::default()).unwrap();
-        device.expect(&[live(), state]);
-    }
-}
-
-/// A device nobody holds is put in its mode without live mode first, so it
-/// never shows Prysm's colours meanwhile.
-#[test]
-fn idle_without_an_output_sets_the_mode_without_taking_the_device_over() {
-    for (mode, state) in [
-        (IdleMode::Off, off()),
-        (
-            IdleMode::Native,
-            json!({"live": false, "on": true, "lor": 2, "tt": 0}),
-        ),
-    ] {
-        let device = Device::new(vec![Reply::Json(OK)]);
-        let settings = device.settings(one_each(), true);
-        device.wled.idle(&settings, mode).unwrap();
-        device.expect(&[state]);
-    }
 }
 
 /// A request whose deadline has passed is not sent: the device's first
@@ -356,12 +336,15 @@ fn a_spent_deadline_sends_nothing() {
     assert_eq!(device.call(), json!({"on": false}));
 }
 
-/// An idle has one deadline, which a timeout names.
+/// A power-off request is attempted once within its deadline.
 #[test]
-fn an_idle_is_bounded_as_a_whole() {
+fn a_power_off_is_bounded_as_a_whole() {
     let device = Device::new(vec![Reply::Hang]);
     let settings = device.settings(one_each(), true);
-    let error = device.wled.idle(&settings, IdleMode::Off).unwrap_err();
+    let error = device
+        .wled
+        .set_power(&settings, Power::Off, &Hangup::default())
+        .unwrap_err();
     assert!(
         matches!(request_error(&error), RequestError::TimedOut(IDLE_LIMIT)),
         "{error:?}"
@@ -369,24 +352,17 @@ fn an_idle_is_bounded_as_a_whole() {
     device.expect(&[off()]);
 }
 
-/// An open has one deadline: live mode by its first part, which a timeout
-/// names, and turning the device off again by its end, [`OPEN_LIMIT`].
 #[test]
-fn an_open_is_bounded_as_a_whole() {
-    let device = Device::new(vec![Reply::Hang, Reply::Hang]);
+fn an_open_is_bounded_without_dispatching_failure_compensation() {
+    let device = Device::new(vec![Reply::Hang, Reply::Json(OK)]);
     let Err(error) = device.open(one_each()) else {
-        panic!("live mode never answered");
+        panic!("live setup never answered");
     };
-    let failed: &NotTurnedOff = source(&error).downcast_ref().expect("both failed");
     assert!(
-        matches!(failed.live, RequestError::TimedOut(TIMEOUT)),
-        "{failed:?}"
+        matches!(request_error(&error), RequestError::TimedOut(OPEN_LIMIT)),
+        "{error:?}"
     );
-    assert!(
-        matches!(failed.off, RequestError::TimedOut(OPEN_LIMIT)),
-        "{failed:?}"
-    );
-    device.expect(&[live(), off()]);
+    device.expect(&[live()]);
 }
 
 #[test]
@@ -399,8 +375,7 @@ fn unreachable_device_fails_open_with_its_cause() {
         leds: one_each(),
         dither: true,
     };
-    let failure = Wled::local(4048)
-        .open(&settings, &Hangup::default())
+    let failure = open_explicit(&Wled::local(4048), &settings, &Hangup::default())
         .err()
         .unwrap();
     assert!(
@@ -416,7 +391,7 @@ fn unreachable_device_fails_open_with_its_cause() {
 }
 
 #[test]
-fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
+fn failed_live_request_reports_its_cause_to_the_session_owner() {
     let (fail, settings) = (Escalation::FAIL_FAST, Escalation::Ask(Fix::ChangeSettings));
     let failures = [
         (
@@ -441,7 +416,11 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
         let device = Device::new(vec![failure, Reply::Json(OK)]);
         let failure = device
             .wled
-            .open(&device.settings(one_each(), true), &Hangup::default())
+            .open_for_sync(
+                &device.settings(one_each(), true),
+                OpenIntent::Explicit,
+                &Hangup::default(),
+            )
             .err()
             .unwrap();
         assert!(
@@ -453,29 +432,8 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
         assert!(!matches!(cause, RequestError::Connect(_)), "{cause:?}");
         assert!(!error.to_string().contains("also failed"), "{error}");
         assert_eq!(error.escalation(), escalation, "{cause:?}");
-        device.expect(&[live(), off()]);
+        device.expect(&[live()]);
     }
-}
-
-#[test]
-fn failed_compensation_is_reported_alongside_the_original_cause() {
-    // Both causes carry a source of their own, so the text shows each chain
-    // whole, in its own clause.
-    let device = Device::new(vec![Reply::Json("nope"), Reply::Json("[")]);
-    let error = device.open(one_each()).err().unwrap();
-    let both: &NotTurnedOff = source(&error).downcast_ref().expect("both causes");
-    assert!(matches!(both.live, RequestError::Json(_)), "{both:?}");
-    assert!(matches!(both.off, RequestError::Json(_)), "{both:?}");
-    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
-    assert_eq!(
-        prysm_ports::chain(&error),
-        format!(
-            "WLED at {} did not switch to live mode: response is not JSON: expected ident \
-             at line 1 column 2; turning it off also failed: response is not JSON: EOF \
-             while parsing a list at line 1 column 1",
-            device.address("127.0.0.1")
-        )
-    );
 }
 
 #[test]
@@ -493,17 +451,22 @@ fn failed_live_mode_reads_as_one_sentence_with_its_cause() {
 }
 
 #[test]
-fn idle_failure_keeps_its_cause() {
-    let device = Device::new(vec![
-        Reply::Json(OK),
-        Reply::Raw("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".into()),
-    ]);
-    let output = device.open(one_each()).unwrap();
-    let error = output.idle(IdleMode::Off, &Hangup::default()).unwrap_err();
+fn an_explicit_off_failure_keeps_its_cause() {
+    let device = Device::new(vec![Reply::Raw(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".into(),
+    )]);
+    let error = device
+        .wled
+        .set_power(
+            &device.settings(one_each(), true),
+            Power::Off,
+            &Hangup::default(),
+        )
+        .unwrap_err();
     assert!(error.to_string().contains("off mode"), "{error}");
     assert!(matches!(request_error(&error), RequestError::Status(404)));
     assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
-    device.expect(&[live(), off()]);
+    device.expect(&[off()]);
 }
 
 #[test]
@@ -513,10 +476,19 @@ fn chunked_and_close_delimited_replies_are_accepted() {
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n{\"succes\r\n8\r\ns\":true}\r\n0\r\n\r\n"
                 .into(),
         ),
-        Reply::Raw(format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{OK}")),
+        // A command acknowledgement uses the same budget as a state read.
+        Reply::Raw(format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{OK}{}", " ".repeat(24 * 1024))),
     ]);
-    let output = device.open(one_each()).unwrap();
-    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
+    let stop = Hangup::default();
+    device
+        .open(one_each())
+        .unwrap()
+        .release(OutputRelease::Local, &stop)
+        .unwrap();
+    device
+        .wled
+        .set_power(&device.settings(one_each(), true), Power::Off, &stop)
+        .unwrap();
     device.expect(&[live(), off()]);
 }
 
@@ -621,7 +593,6 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
         }
         .validate()
     };
-    // The total, at the counts: none, or more than WLED drives across edges.
     for leds in [
         LedCounts::default(),
         LedCounts {
@@ -643,7 +614,6 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
             "the LEDs must total 1 to 16384, the most WLED drives"
         );
     }
-    // One edge over the limit, at that edge.
     for (leds, field) in [
         (
             LedCounts {
@@ -668,7 +638,6 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
             "an edge can have at most 16384 LEDs, the most WLED drives"
         );
     }
-    // Every LED on one edge, and 5000 on one edge, are fine.
     for leds in [
         LedCounts {
             top: MAX_LEDS,
@@ -704,7 +673,7 @@ fn host_name_is_resolved_at_open_for_http_and_ddp() {
         leds: one_each(),
         dither: true,
     };
-    let mut output = device.wled.open(&settings, &Hangup::default()).unwrap();
+    let mut output = open_explicit(&device.wled, &settings, &Hangup::default()).unwrap();
     let (head, state) = device.call_with_head();
     assert_eq!(state, live());
     let host = format!("\r\nHost: {}\r\n", device.address("localhost"));
@@ -723,7 +692,9 @@ fn unresolvable_host_fails_open_naming_the_host() {
     };
     let wled = Wled::default()
         .with_lookup(|_, _| Err(io::Error::new(io::ErrorKind::NotFound, "no such host")));
-    let failure = wled.open(&settings, &Hangup::default()).err().unwrap();
+    let failure = open_explicit(&wled, &settings, &Hangup::default())
+        .err()
+        .unwrap();
     assert!(
         matches!(failure, OpenFailure::Untouched(_)),
         "nothing reached it"
@@ -760,7 +731,9 @@ fn a_host_resolving_to_no_unicast_address_asks_for_other_settings() {
         dither: true,
     };
     let wled = Wled::default().with_lookup(|_, port| Ok(SocketAddr::from(([224, 0, 0, 1], port))));
-    let failure = wled.open(&settings, &Hangup::default()).err().unwrap();
+    let failure = open_explicit(&wled, &settings, &Hangup::default())
+        .err()
+        .unwrap();
     let OpenFailure::Untouched(error) = failure else {
         panic!("nothing reached it");
     };
@@ -794,7 +767,7 @@ fn a_hanging_lookup_is_bounded_and_not_repeated() {
     };
     for _ in 0..2 {
         let error = wled
-            .open(&settings, &Hangup::default())
+            .open_for_sync(&settings, OpenIntent::Explicit, &Hangup::default())
             .err()
             .unwrap()
             .into_error();
@@ -909,7 +882,6 @@ fn each_takeover_cause_is_reported_and_clears_when_wled_shows_prysm_again() {
             ),
             Some(OutputIssue::NotLive),
         ),
-        // Live only through Prysm's JSON request: no DDP packet arrived.
         (
             si(
                 json!({"on": true, "lor": 0}),
@@ -936,9 +908,7 @@ fn each_takeover_cause_is_reported_and_clears_when_wled_shows_prysm_again() {
             Reply::Json(r#"{"state":{}}"#),
             Some(OutputIssue::Unreachable),
         ),
-        // A sender address that cannot be read names no other sender.
         (sender("not an address"), None),
-        // Firmware without `lor`, `lm` or `lip` reports what it can.
         (si(json!({"on": true}), json!({"live": true})), None),
     ];
     let (replies, expected): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
@@ -951,23 +921,52 @@ fn each_takeover_cause_is_reported_and_clears_when_wled_shows_prysm_again() {
 }
 
 #[test]
-fn the_sender_address_behind_nat_is_learned_from_wled() {
-    // Docker's bridge network: WLED sees the host's address, not ours.
+fn the_first_sender_is_compared_with_the_local_route() {
     let device = Device::new(vec![
-        sender("10.0.0.2"),
-        sender("10.0.0.2"),
-        sender("10.0.0.3"),
-        sender("10.0.0.2"),
+        sender("192.0.2.9"),
+        sender("192.0.2.9"),
+        sender(""),
+        sender("not an address"),
+        healthy(),
+        sender("192.0.2.9"),
     ]);
     let mut observer = device.observer();
-    let found: Vec<_> = (0..4).map(|_| check(&mut observer)).collect();
-    assert_eq!(found, [None, None, Some(OutputIssue::OtherSender), None]);
+    let found: Vec<_> = (0..6).map(|_| check(&mut observer)).collect();
+    assert_eq!(
+        found,
+        [
+            Some(OutputIssue::OtherSender),
+            Some(OutputIssue::OtherSender),
+            None,
+            None,
+            None,
+            Some(OutputIssue::OtherSender),
+        ]
+    );
+}
 
-    // Another sender was showing first; our own address corrects the guess.
-    let device = Device::new(vec![sender("192.0.2.9"), healthy(), sender("192.0.2.9")]);
-    let mut observer = device.observer();
-    let found: Vec<_> = (0..3).map(|_| check(&mut observer)).collect();
-    assert_eq!(found, [None, None, Some(OutputIssue::OtherSender)]);
+#[test]
+fn a_different_ddp_route_cannot_establish_local_ownership() {
+    let device = Device::new(vec![healthy()]);
+    let ddp = "[::1]:4048".parse().unwrap();
+    let mut observer = Observer::new(
+        device.http(),
+        ddp,
+        &device.address("127.0.0.1"),
+        Duration::ZERO,
+        Instant::now(),
+    )
+    .state_only();
+    assert_eq!(check(&mut observer), None);
+    assert_eq!(observer.known_sender(), None);
+    assert_eq!(
+        observer
+            .observation()
+            .unwrap()
+            .during_stream(observer.known_sender()),
+        crate::lifecycle::StreamDisplay::Unknown
+    );
+    device.check_request();
 }
 
 /// A refused connect is reported as soon as a poll sees it, not at the
@@ -978,7 +977,7 @@ fn an_unreachable_state_endpoint_is_reported_at_once() {
     let device = listener.local_addr().unwrap();
     drop(listener);
     let t0 = Instant::now();
-    let mut observer = Observer::new(device, "wled", Duration::ZERO, t0);
+    let mut observer = Observer::new(device, device, "wled", Duration::ZERO, t0);
     let found = eventually("the refusal", WAIT, || {
         let found = observer.poll(t0);
         (!observer.checking()).then_some(found)
@@ -1012,7 +1011,7 @@ fn a_state_check_never_waits_for_the_connect() {
         assert!(fillers.len() < 64, "the queue never filled");
     }
     let t0 = Instant::now();
-    let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
+    let mut observer = Observer::new(address, address, "wled", Duration::ZERO, t0);
     assert_eq!(observer.poll(t0), None, "the check started");
     assert!(observer.checking(), "still connecting");
     assert_eq!(observer.poll(t0 + REPLY / 2), None);
@@ -1021,8 +1020,8 @@ fn a_state_check_never_waits_for_the_connect() {
     assert!(!observer.checking());
 }
 
-/// State checks allow 64 KiB, more than the 20 KiB of other requests:
-/// segments and usermods make `/json/si` large.
+/// Large segment and usermod data can fill `/json/si`; an oversized reply
+/// still marks the streaming observer unreachable.
 #[test]
 fn a_state_reply_may_hold_up_to_64_kib() {
     let state = |pad: usize| {
@@ -1059,7 +1058,7 @@ fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
         }
     });
     let t0 = Instant::now();
-    let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
+    let mut observer = Observer::new(address, address, "wled", Duration::ZERO, t0);
     // The whole head drips in, a byte at a time; the body never ends.
     eventually("the reply to begin", WAIT, || {
         assert_eq!(observer.poll(t0), None);
@@ -1085,9 +1084,14 @@ fn state_checks_keep_one_pace_whatever_they_answered() {
         healthy(),
     ]);
     let t0 = Instant::now();
-    let mut observer =
-        Observer::new(device.http(), &device.address("127.0.0.1"), EVERY, t0).state_only();
-    // The first check is `EVERY` after the observer starts.
+    let mut observer = Observer::new(
+        device.http(),
+        device.udp.local_addr().unwrap(),
+        &device.address("127.0.0.1"),
+        EVERY,
+        t0,
+    )
+    .state_only();
     for (n, found) in (1..).zip([
         None,
         Some(OutputIssue::Unreachable),
@@ -1107,7 +1111,13 @@ fn state_checks_keep_one_pace_whatever_they_answered() {
 fn a_refused_configuration_read_keeps_the_pace() {
     let device = Device::new(vec![at(255), refused(), at(255)]);
     let t0 = Instant::now();
-    let mut observer = Observer::new(device.http(), &device.address("127.0.0.1"), EVERY, t0);
+    let mut observer = Observer::new(
+        device.http(),
+        device.udp.local_addr().unwrap(),
+        &device.address("127.0.0.1"),
+        EVERY,
+        t0,
+    );
     let first = t0 + EVERY;
     assert_eq!(check_at(&mut observer, first), None);
     device.check_request();
@@ -1130,9 +1140,6 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
     let device = Device::new(vec![Reply::Json(OK), Reply::Hang]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[live()]);
-    // The check is sent and its reply never comes; frames go on meanwhile.
-    // (That a check never waits, and ends at its deadline, the observer's
-    // own tests show with injected time.)
     device.check_sent(|| {
         output.write(&EdgeColors::default()).unwrap();
         assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
@@ -1141,7 +1148,6 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
     for _ in 0..20 {
         output.write(&EdgeColors::default()).unwrap();
         assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
-        // No answer yet, or none by the deadline.
         let issue = output.report().issue;
         assert!(
             matches!(issue, None | Some(OutputIssue::Unreachable)),
@@ -1155,10 +1161,12 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
 #[test]
 fn a_send_error_with_no_row_fails_write_at_once() {
     let device = Device::new(vec![Reply::Json(OK)]);
-    let mut output = Wled::local(0)
-        .open(&device.settings(one_each(), true), &Hangup::default())
-        .map_err(OpenFailure::into_error)
-        .unwrap();
+    let mut output = open_explicit(
+        &Wled::local(0),
+        &device.settings(one_each(), true),
+        &Hangup::default(),
+    )
+    .unwrap();
     device.expect(&[live()]);
     let error = output.write(&EdgeColors::default()).unwrap_err();
     assert!(
@@ -1176,29 +1184,24 @@ fn a_send_error_with_no_row_fails_write_at_once() {
 }
 
 #[test]
-fn idle_abandons_a_check_in_flight_and_restores_the_device() {
-    for (mode, state) in [
-        (IdleMode::Off, off()),
-        (
-            IdleMode::Native,
-            json!({"live": false, "on": true, "lor": 2, "tt": 0}),
-        ),
-    ] {
-        let device = Device::new(vec![Reply::Json(OK), Reply::Hang, Reply::Json(OK)]);
-        let mut output = device.open(one_each()).unwrap();
-        device.expect(&[live()]);
-        output.write(&EdgeColors::default()).unwrap();
-        device.check_sent(|| assert_eq!(output.report().issue, None, "no answer yet"));
-        // The fixture answers one connection at a time: the idle's request
-        // is answered only once the check's connection is closed, so an
-        // idle that waited for the check would time out instead.
-        output.idle(mode, &Hangup::default()).unwrap();
-        device.expect(&[state]);
-    }
+fn local_release_cancels_the_observer_before_explicit_off() {
+    let device = Device::new(vec![Reply::Json(OK), Reply::Hang, Reply::Json(OK)]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[live()]);
+    device.check_sent(|| assert_eq!(output.report().issue, None, "no answer yet"));
+    let stop = Hangup::default();
+    output.release(OutputRelease::Local, &stop).unwrap();
+    // The fixture handles connections one at a time, so Off can succeed only
+    // after the pending observer connection closes.
+    device
+        .wled
+        .set_power(&device.settings(one_each(), true), Power::Off, &stop)
+        .unwrap();
+    device.expect(&[off()]);
 }
 
 #[test]
-fn findings_survive_until_the_next_check_and_idle_still_restores() {
+fn observations_report_a_device_switched_off_externally() {
     let device = Device::new(vec![
         Reply::Json(OK),
         si(
@@ -1214,7 +1217,17 @@ fn findings_survive_until_the_next_check_and_idle_still_restores() {
         (output.report().issue == Some(OutputIssue::Off)).then_some(())
     });
     device.check_request();
-    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
+    output
+        .release(OutputRelease::Local, &Hangup::default())
+        .unwrap();
+    device
+        .wled
+        .set_power(
+            &device.settings(one_each(), true),
+            Power::Off,
+            &Hangup::default(),
+        )
+        .unwrap();
     device.expect(&[off()]);
 }
 
@@ -1240,7 +1253,6 @@ fn percent(percent: u8) -> Option<DeviceBrightness> {
 #[test]
 fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
     let cases = [
-        // WLED's defaults: master brightness applies, factor 100 %.
         (
             cfg(
                 json!({"if": {"live": {"en": true, "maxbri": false}}, "light": {"scale-bri": 100}}),
@@ -1248,7 +1260,6 @@ fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
             102,
             percent(40),
         ),
-        // A configuration without the fields takes WLED's defaults.
         (cfg(json!({"if": {"live": {}}})), 102, percent(40)),
         // "Force max brightness": realtime colours ignore `bri`.
         (
@@ -1256,7 +1267,6 @@ fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
             102,
             percent(100),
         ),
-        // The brightness factor scales either way, capped at full.
         (
             cfg(json!({"if": {"live": {"maxbri": true}}, "light": {"scale-bri": 50}})),
             255,
@@ -1284,13 +1294,11 @@ fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
             102,
             percent(27),
         ),
-        // Forced to full, the table leaves it full.
         (
             cfg(json!({"if": {"live": {"maxbri": true}}, "light": {"gc": {"bri": 2.2}}})),
             102,
             percent(100),
         ),
-        // Behind WLED's settings PIN: nothing to go on, nothing reported.
         (
             Reply::Raw("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".into()),
             102,
@@ -1307,7 +1315,6 @@ fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
             "case {index}: no configuration yet"
         );
         device.check_request();
-        // The second check reads the configuration, leaving the finding.
         assert_eq!(check(&mut observer), None, "case {index}");
         device.get_request("/json/cfg");
         assert_eq!(observer.brightness(), expected, "case {index}");
@@ -1359,7 +1366,17 @@ fn an_open_output_reports_wled_brightness() {
     assert_eq!(Some(brightness), percent(40));
     device.check_request();
     device.get_request("/json/cfg");
-    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
+    output
+        .release(OutputRelease::Local, &Hangup::default())
+        .unwrap();
+    device
+        .wled
+        .set_power(
+            &device.settings(one_each(), true),
+            Power::Off,
+            &Hangup::default(),
+        )
+        .unwrap();
     device.expect(&[off()]);
 }
 
@@ -1408,11 +1425,20 @@ fn an_open_output_reports_wled_led_count_and_keeps_sending() {
         report.led_count
     });
     assert!(reports > 1, "unknown before the check answered");
-    // Four LEDs sent, 120 on the device: reported, and writing goes on.
     assert_eq!(count, 120);
     output.write(&EdgeColors::default()).unwrap();
     device.check_request();
-    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
+    output
+        .release(OutputRelease::Local, &Hangup::default())
+        .unwrap();
+    device
+        .wled
+        .set_power(
+            &device.settings(one_each(), true),
+            Power::Off,
+            &Hangup::default(),
+        )
+        .unwrap();
     device.expect(&[off()]);
 }
 
@@ -1437,19 +1463,14 @@ fn wled_gamma_is_read_from_its_configuration() {
     let cases = [
         (gamma_cfg(2.2, false), gamma(2.2)),
         (gamma_cfg(2.8, false), gamma(2.8)),
-        // WLED 16 takes gammas under 1.
         (gamma_cfg(0.5, false), gamma(0.5)),
-        // "Use Gamma correction for color" off: WLED reports 1.
         (gamma_cfg(1.0, false), linear),
-        // Realtime gamma disabled: linear, whatever the colour gamma.
         (gamma_cfg(2.8, true), linear),
-        // No colour gamma given: unknown.
         (cfg(json!({"if": {"live": {}}})), Transfer::Srgb),
         (
             cfg(json!({"if": {"live": {}}, "light": {"gc": {"bri": 1}}})),
             Transfer::Srgb,
         ),
-        // Behind WLED's settings PIN.
         (refused(), Transfer::Srgb),
     ];
     for (index, (config, expected)) in cases.into_iter().enumerate() {
@@ -1482,13 +1503,11 @@ fn a_real_wled_configuration_gives_its_gamma() {
     check(&mut observer);
     device.get_request("/json/cfg");
     assert_eq!(observer.transfer(), gamma(2.2));
-    // Brightness gamma off: 102 of 255 is 40 %; through 2.2 it would be 13 %.
     assert_eq!(observer.brightness(), percent(40));
 }
 
 #[test]
 fn a_gamma_changed_in_wled_is_followed_and_kept_through_a_refused_read() {
-    // Checks 1, 31 and 61 (from 0) read the configuration; the last is refused.
     let states = || (0..29).map(|_| at(255));
     let replies = [at(255), gamma_cfg(2.2, false)]
         .into_iter()
@@ -1547,7 +1566,17 @@ fn an_open_output_encodes_for_wled_gamma() {
         }
         device.check_request();
         device.get_request("/json/cfg");
-        output.idle(IdleMode::Off, &Hangup::default()).unwrap();
+        output
+            .release(OutputRelease::Local, &Hangup::default())
+            .unwrap();
+        device
+            .wled
+            .set_power(
+                &device.settings(one_each(), true),
+                Power::Off,
+                &Hangup::default(),
+            )
+            .unwrap();
         device.expect(&[off()]);
     }
 }
@@ -1577,7 +1606,7 @@ fn cut_open(wled: Wled, settings: WledSettings, ready: impl FnOnce(&Hangup)) -> 
     let hangup = Hangup::default();
     let opening = {
         let hangup = hangup.clone();
-        thread::spawn(move || wled.open(&settings, &hangup).err())
+        thread::spawn(move || open_explicit(&wled, &settings, &hangup).err())
     };
     ready(&hangup);
     hangup.cut();
@@ -1611,7 +1640,11 @@ fn an_open_after_the_cut_reaches_nothing() {
     hangup.cut();
     let failure = device
         .wled
-        .open(&device.settings(one_each(), true), &hangup)
+        .open_for_sync(
+            &device.settings(one_each(), true),
+            OpenIntent::Explicit,
+            &hangup,
+        )
         .err()
         .expect("the open failed");
     let OpenFailure::Untouched(error) = failure else {
@@ -1647,22 +1680,177 @@ fn a_cut_ends_an_open_waiting_for_its_name() {
     GATE.1.notify_all();
 }
 
-/// A cut ends a held output's idle waiting for its reply at once.
+/// A cut ends a power-off command waiting for its reply.
 #[test]
-fn a_cut_ends_an_idle_waiting_for_a_reply() {
-    let device = Device::new(vec![Reply::Json(OK), Reply::Hang]);
-    let output = device.open(one_each()).unwrap();
-    device.expect(&[live()]);
+fn a_cut_ends_power_off_waiting_for_a_reply() {
+    let device = Device::new(vec![Reply::Hang]);
+    let settings = device.settings(one_each(), true);
+    let wled = Wled::local(device.udp.local_addr().unwrap().port());
     let hangup = Hangup::default();
-    let idling = {
+    let powering_off = {
         let hangup = hangup.clone();
-        thread::spawn(move || output.idle(IdleMode::Native, &hangup))
+        thread::spawn(move || wled.set_power(&settings, Power::Off, &hangup))
     };
-    assert_eq!(
-        device.call(),
-        json!({"live": false, "on": true, "lor": 2, "tt": 0})
-    );
+    assert_eq!(device.call(), off());
     hangup.cut();
-    let error = prysm_testkit::within(AT_ONCE, move || idling.join().unwrap()).unwrap_err();
+    let error = prysm_testkit::within(AT_ONCE, move || powering_off.join().unwrap()).unwrap_err();
     assert!(stopped(&error), "{}", prysm_ports::chain(&error));
+}
+
+const OVERRIDE_WHILE_OFF: &str =
+    r#"{"state":{"on":false,"lor":2},"info":{"live":true,"lm":"DDP","lip":"127.0.0.2"}}"#;
+const ON_IDLE: &str = r#"{"state":{"on":true},"info":{"live":false}}"#;
+const OFF_IDLE: &str = r#"{"state":{"on":false},"info":{"live":false}}"#;
+
+#[test]
+fn production_resume_defers_to_override_and_explicit_open_clears_it() {
+    use prysm_ports::OutputDisplay;
+
+    let device = Device::new(vec![Reply::Json(OVERRIDE_WHILE_OFF), Reply::Json(OK)]);
+    let settings = device.settings(
+        LedCounts {
+            bottom: 1,
+            ..LedCounts::default()
+        },
+        false,
+    );
+    let stop = Hangup::default();
+    let handoff = device
+        .wled
+        .open_for_sync(&settings, OpenIntent::Resume, &stop)
+        .unwrap();
+    let OutputOpen::Handoff(seen) = handoff else {
+        panic!("automatic resume took over a device-local override");
+    };
+    assert_eq!(seen.power, Power::Off);
+    assert_eq!(seen.display, OutputDisplay::Override);
+    device.check_request();
+
+    let output = device
+        .wled
+        .open_for_sync(&settings, OpenIntent::Explicit, &stop)
+        .unwrap();
+    let OutputOpen::Streaming(output) = output else {
+        panic!("explicit open did not stream")
+    };
+    output.release(OutputRelease::Local, &stop).unwrap();
+    device.expect(&[json!({"on": true, "lor": 0, "tt": 0})]);
+}
+
+#[test]
+fn production_effects_power_and_off_preserve_device_local_display_settings() {
+    let device = Device::new(vec![
+        Reply::Json(ON_IDLE),
+        Reply::Json(OFF_IDLE),
+        Reply::Json(OK),
+        Reply::Json(OK),
+    ]);
+    let settings = device.settings(
+        LedCounts {
+            bottom: 1,
+            ..LedCounts::default()
+        },
+        false,
+    );
+    let stop = Hangup::default();
+    device.wled.set_power(&settings, Power::On, &stop).unwrap();
+    device.check_request();
+    device.wled.set_power(&settings, Power::On, &stop).unwrap();
+    device.check_request();
+    device.wled.set_power(&settings, Power::Off, &stop).unwrap();
+    device.expect(&[
+        json!({"on": true, "tt": 0}),
+        json!({"on": false, "live": false, "tt": 0}),
+    ]);
+}
+
+#[test]
+fn production_handoff_does_not_mutate_an_observed_override() {
+    let device = Device::new(vec![
+        Reply::Json(ON_IDLE),
+        Reply::Json(OK),
+        Reply::Json(OVERRIDE_WHILE_OFF),
+    ]);
+    let settings = device.settings(
+        LedCounts {
+            bottom: 1,
+            ..LedCounts::default()
+        },
+        false,
+    );
+    let stop = Hangup::default();
+    let output = device
+        .wled
+        .open_for_sync(&settings, OpenIntent::Resume, &stop)
+        .unwrap();
+    let OutputOpen::Streaming(output) = output else {
+        panic!("resume did not stream")
+    };
+    output.release(OutputRelease::Handoff, &stop).unwrap();
+    device.check_request();
+    assert_eq!(device.call(), json!({"on": true, "tt": 0}));
+    device.check_request();
+    device.expect(&[]);
+}
+
+#[test]
+fn production_ordinary_release_relinquishes_our_stream_without_installing_an_override() {
+    use prysm_ports::OutputObservationState;
+
+    let device = Device::new(vec![Reply::Json(OK), healthy(), healthy(), Reply::Json(OK)]);
+    let settings = device.settings(one_each(), false);
+    let stop = Hangup::default();
+    let output = device
+        .wled
+        .open_for_sync(&settings, OpenIntent::Explicit, &stop)
+        .unwrap();
+    let OutputOpen::Streaming(mut output) = output else {
+        panic!("explicit open did not stream")
+    };
+    assert_eq!(device.call(), json!({"on": true, "lor": 0, "tt": 0}));
+    eventually("WLED's verified sender", WAIT, || {
+        output.report();
+        matches!(
+            output.stream_observation(),
+            OutputObservationState::Observed(_)
+        )
+        .then_some(())
+    });
+    output
+        .release(OutputRelease::Ordinary(IdleMode::Native), &stop)
+        .unwrap();
+    device.check_request();
+    device.check_request();
+    device.expect(&[json!({"live": false})]);
+}
+
+#[test]
+fn ordinary_release_leaves_external_or_unknown_sender_alone() {
+    use prysm_ports::OutputObservationState;
+
+    for (lip, issue) in [("192.0.2.9", Some(OutputIssue::OtherSender)), ("", None)] {
+        let device = Device::new(vec![
+            Reply::Json(OK),
+            sender(lip),
+            sender(lip),
+            Reply::Json(OK),
+        ]);
+        let mut output = device.open(one_each()).unwrap();
+        assert_eq!(device.call(), live());
+        let found = eventually("the first WLED observation", WAIT, || {
+            let report = output.report();
+            matches!(
+                output.stream_observation(),
+                OutputObservationState::Observed(_)
+            )
+            .then_some(report.issue)
+        });
+        assert_eq!(found, issue);
+        output
+            .release(OutputRelease::Ordinary(IdleMode::Off), &Hangup::default())
+            .unwrap();
+        device.check_request();
+        device.check_request();
+        device.expect(&[]);
+    }
 }

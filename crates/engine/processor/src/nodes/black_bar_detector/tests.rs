@@ -1,4 +1,4 @@
-use super::{BlackBarDetector, Candidate, Content, EdgeCrop, Px, Sighting};
+use super::{BlackBarDetector, Candidate, EdgeCrop, Px, Sighting};
 use crate::frames::{FrameView, Viewport, yuyv_frame_from_luma};
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use std::time::{Duration, Instant};
@@ -456,7 +456,6 @@ fn nv12_frames_detect_the_same_bars_as_yuyv_and_see_their_chroma() {
             "{range:?}"
         );
     }
-    // Dark but strongly colored rows are picture, not bars.
     let mut bytes = Vec::with_capacity((WIDTH * HEIGHT * 3 / 2) as usize);
     let dark = |y: u32| !(40..320).contains(&y);
     for y in 0..HEIGHT {
@@ -536,7 +535,6 @@ fn dark_scene(width: u32, height: u32, frame: u32, letterboxed: bool) -> Frame {
         if noise(cx, cy, 0).is_multiple_of(16) {
             return 90;
         }
-        // Thin near-black lines, one cell high, as in shadows or blinds.
         if letterboxed && cy % 6 == 3 {
             return 17;
         }
@@ -609,7 +607,6 @@ fn a_dark_scene_without_bars_is_never_cropped_at_any_capture_size() {
 
 #[test]
 fn intermittent_sightings_in_a_dark_scene_crop_after_enough_evidence_without_flicker() {
-    // Every third scan cannot tell (a black frame): evidence pauses, it does not restart.
     for (width, height) in SIZES {
         let black = cells(width, height, 0, |_, _| 16);
         let mut frames: Vec<_> = (0..8).map(|i| dark_scene(width, height, i, true)).collect();
@@ -624,7 +621,6 @@ fn intermittent_sightings_in_a_dark_scene_crop_after_enough_evidence_without_fli
         );
         assert_eq!(changes(&crops), 1, "{width}x{height}: the crop flickered");
     }
-    // Sightings in under half of the scans never confirm.
     let lit = picture([48, 0, 48, 0], |_, _| 128);
     let dark = yuyv_frame_from_luma(WIDTH, HEIGHT, |_, _| 0);
     let start = Instant::now();
@@ -673,8 +669,6 @@ fn band() -> Frame {
 fn a_rejected_crop_keeps_the_evidence_of_the_edges_that_did_not_move() {
     let start = Instant::now() + Duration::from_secs(10);
     let mut detector = BlackBarDetector::default();
-    // The left edge has seen a pillar 40 px wide for a second; the band does
-    // not show the left edge, so its evidence only waits.
     detector.edges[3].candidate = Some(Candidate {
         anchor: Px(40),
         seen: (0..20_u64)
@@ -693,7 +687,6 @@ fn a_rejected_crop_keeps_the_evidence_of_the_edges_that_did_not_move() {
             "{millis} ms"
         );
     }
-    // Top and bottom proposed, were rejected, and start over.
     let edges = &detector.edges;
     assert!(edges[0].candidate.is_none() && edges[2].candidate.is_none());
     assert_eq!(detector.crops(), [Px(0); 4]);
@@ -712,7 +705,7 @@ enum State {
     Gathering,
     /// A candidate 80 px in, one scan short of 1.5 s.
     Due,
-    /// As `Due`, but a scan 0.1 s ago saw picture at 40 px.
+    /// As `Due`, but a scan 0.1 s ago saw the outer end of the candidate’s jitter.
     DueVetoed,
     /// At 80 px, with a candidate 40 px in one scan short of 0.4 s.
     DueOutward,
@@ -738,35 +731,20 @@ fn edge(state: State, now: Instant) -> EdgeCrop {
         State::Due | State::DueVetoed => (40, Some(80), 30),
         State::DueOutward => (80, Some(40), 8),
     };
-    let sightings: Vec<_> = (0..scans)
-        .map(|i| Sighting {
-            time: now - SCAN * (scans - i),
-            credit: if i == 0 { Duration::ZERO } else { SCAN },
-            position: Px(anchor.unwrap_or_default()),
-        })
-        .collect();
-    let mut recent_content: std::collections::VecDeque<_> = sightings
-        .iter()
-        .filter(|sighting| now - sighting.time < Duration::from_millis(1500))
-        .map(|sighting| Content {
-            position: sighting.position,
-            time: sighting.time,
-        })
-        .collect();
-    if let State::DueVetoed = state {
-        recent_content.push_back(Content {
-            position: Px(40),
-            time: now - Duration::from_millis(100),
-        });
-    }
-    EdgeCrop {
+    let mut edge = EdgeCrop {
         current: Px(current),
-        candidate: anchor.map(|anchor| Candidate {
-            anchor: Px(anchor),
-            seen: sightings.into(),
-        }),
-        recent_content,
+        ..EdgeCrop::default()
+    };
+    for i in 0..scans {
+        let position = match state {
+            State::DueVetoed if i == scans - 2 => 76,
+            State::DueVetoed if i > 0 => 84,
+            _ => anchor.expect("an edge with sightings has a candidate"),
+        };
+        let at = now - SCAN * (scans - i);
+        assert_eq!(edge.propose(Some(Px(position)), at, SCAN, Px(4)), None);
     }
+    edge
 }
 
 #[test]
@@ -821,8 +799,33 @@ fn one_edge_proposes_once_its_evidence_confirms() {
 }
 
 #[test]
+fn an_inward_veto_expires_at_the_confirmation_boundary() {
+    let start = Instant::now();
+    let mut edge = EdgeCrop {
+        current: Px(40),
+        ..EdgeCrop::default()
+    };
+    // All sightings stay within 4 px of the anchor. The low one rules out
+    // the median of 84 until it is exactly 1.5 s old.
+    for scan in 0..=30 {
+        let position = match scan {
+            0 => 80,
+            1 => 76,
+            _ => 84,
+        };
+        assert_eq!(
+            edge.propose(Some(Px(position)), start + SCAN * scan, SCAN, Px(4)),
+            None
+        );
+    }
+    assert_eq!(
+        edge.propose(Some(Px(84)), start + SCAN * 31, SCAN, Px(4)),
+        Some(Px(84))
+    );
+}
+
+#[test]
 fn proposals_commit_together_only_when_they_leave_a_tenth_of_the_frame() {
-    // 640x360: at least 64 columns and 36 rows must remain.
     let frame = Frame::dummy(WIDTH, HEIGHT).unwrap();
     let now = Instant::now() + Duration::from_secs(10);
     let some = |crops: [u32; 4]| crops.map(|crop| (crop > 0).then_some(Px(crop)));

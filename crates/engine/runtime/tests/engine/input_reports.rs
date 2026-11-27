@@ -25,10 +25,12 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
 
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let started = tokio::time::Instant::now();
-        let waiting = handle.snapshot().borrow().input.unwrap();
+        let waiting = snapshot_until(&handle, |s| s.input.is_some())
+            .await
+            .input
+            .unwrap();
         assert_eq!(waiting.picture, Picture::Quiet, "nothing measured yet");
 
-        // The fake delivers a frame about every 2 ms.
         let receiving = snapshot_until(&handle, |s| arriving(s.input)).await;
         assert!(
             started.elapsed() >= Duration::from_millis(900),
@@ -39,7 +41,6 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         let fps = receiving.input.unwrap().fps;
         assert!(fps > 0.0, "{fps}");
 
-        // After 150 frames it goes quiet.
         let quiet = snapshot_until(&handle, |s| !arriving(s.input)).await;
         assert!(quiet.input.unwrap().fps.abs() < f32::EPSILON);
         assert_eq!(
@@ -159,19 +160,15 @@ async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
             capture_ms,
             output_ms,
         } = input.latency.unwrap();
-        // At least the write itself; the rest is processing.
         assert!(output_ms >= 20.0, "{output_ms}");
         assert!(output_ms < 200.0, "{output_ms}");
-        // Frames without a capture time have no capture part.
         assert_eq!(capture_ms, None);
-        // One write at a time, about 50 a second.
         assert!(
             input.sent_fps > 0.0 && input.sent_fps <= 55.0,
             "{}",
             input.sent_fps
         );
 
-        // The 61st write fails: only flushed frames are timed.
         snapshot_until(&handle, |s| s.session.failure().is_some()).await;
         let stats = handle.stats();
         assert_eq!(stats.flushed.count, stats.frames_sent);

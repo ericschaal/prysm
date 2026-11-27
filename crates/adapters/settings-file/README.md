@@ -1,6 +1,6 @@
 # File settings store
 
-`prysm-settings-file` implements `prysm_ports::SettingsStore` with one JSON file.
+`prysm-settings-file` implements `prysm_ports::SettingsStore` with a JSON configuration file.
 It is plain blocking I/O; the runtime calls it off the async executor and owns
 ordering (validate, persist, apply).
 
@@ -14,6 +14,11 @@ The path is used as given; nothing is touched until the first `load` or `save`.
 A relative path resolves against the process working directory. The parent
 directory must exist: `save` never creates directories and fails with an error
 naming the path.
+
+The store saves the last selected lighting mode beside the configuration.
+For `settings.json` the companion file is `settings.json.mode` and contains
+the JSON string `"effects"` or `"screen_sync"`. Each write uses an atomic
+rename. Powering off preserves this choice for the next Power press.
 
 ## Format
 

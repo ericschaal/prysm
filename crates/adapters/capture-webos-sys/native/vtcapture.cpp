@@ -14,33 +14,33 @@ static int guarded(char* error, size_t error_length, Call call) noexcept {
     return -1000;
 }
 
-extern "C" int prysm_vt_create(VT_DRIVER* (*function)(), VT_DRIVER** driver,
+extern "C" int prysm_vt_create(decltype(&vtCapture_create) function, VT_DRIVER** driver,
     char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { *driver = function(); return *driver ? 0 : -1; });
 }
-extern "C" int prysm_vt_init(int (*function)(VT_DRIVER*, const char*, char*),
+extern "C" int prysm_vt_init(decltype(&vtCapture_init) function,
     VT_DRIVER* driver, const char* caller, char* client, char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { return function(driver, caller, client); });
 }
-extern "C" int prysm_vt_preprocess(int (*function)(VT_DRIVER*, char*, _LibVtCaptureProperties*),
+extern "C" int prysm_vt_preprocess(decltype(&vtCapture_preprocess) function,
     VT_DRIVER* driver, char* client, _LibVtCaptureProperties* properties,
     char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { return function(driver, client, properties); });
 }
-extern "C" int prysm_vt_plane(int (*function)(VT_DRIVER*, char*, _LibVtCapturePlaneInfo*),
+extern "C" int prysm_vt_plane(decltype(&vtCapture_planeInfo) function,
     VT_DRIVER* driver, char* client, _LibVtCapturePlaneInfo* plane,
     char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { return function(driver, client, plane); });
 }
-extern "C" int prysm_vt_buffer(int (*function)(VT_DRIVER*, _LibVtCaptureBufferInfo*),
+extern "C" int prysm_vt_buffer(decltype(&vtCapture_currentCaptureBuffInfo) function,
     VT_DRIVER* driver, _LibVtCaptureBufferInfo* buffer, char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { return function(driver, buffer); });
 }
-extern "C" int prysm_vt_client(int (*function)(VT_DRIVER*, char*),
+extern "C" int prysm_vt_client(decltype(&vtCapture_process) function,
     VT_DRIVER* driver, char* client, char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { return function(driver, client); });
 }
-extern "C" int prysm_vt_release(void (*function)(VT_DRIVER*), VT_DRIVER* driver,
+extern "C" int prysm_vt_release(decltype(&vtCapture_release) function, VT_DRIVER* driver,
     char* error, size_t error_length) noexcept {
     return guarded(error, error_length, [&] { function(driver); return 0; });
 }

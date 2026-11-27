@@ -25,7 +25,7 @@ import {
   plainFailure,
 } from '@prysm/application-client';
 import { CalibrationScreen, QrCode } from './calibration';
-import { Dialogs, type DialogId } from './dialogs';
+import { Dialogs } from './dialogs';
 import { localPortal, shown } from './preferences';
 import { qrCode } from './qr';
 import { useRemoteNavigation } from './navigation';
@@ -40,13 +40,7 @@ import {
 } from './portal-connection';
 import { tvScreen } from './screen';
 import { useTvService } from './service';
-import { tvStatus } from './status';
 import './tv.css';
-
-const parents: Partial<Record<DialogId, DialogId>> = {
-  diagnostics: 'service',
-  cleanup: 'service',
-};
 
 export interface TvAppProps {
   /** The package this bundle belongs to. */
@@ -61,7 +55,6 @@ export interface TvAppProps {
 
 /** Set by `pagehide`, which comes before `document.hidden` says so. */
 let pageHidden = false;
-/** The page is shown now. */
 const pageShown = () => !document.hidden && !pageHidden;
 
 function watchVisibility(changed: () => void) {
@@ -115,7 +108,6 @@ function calibrationBlocker(
   address: string | null,
 ): string | null {
   if (!player.supported || !portal.supported) return 'Needs a newer TV';
-  // Before the service answers, the address is not known yet.
   if (!tv) return 'Waiting for Prysm';
   if (flavor === 'slim' && !address) return 'Add the address first';
   if (flavor === 'slim' && !isEnabled(tv)) return 'Start capture first';
@@ -151,9 +143,8 @@ export function TvApp({
   // Its own connection: a lost TV service subscription does not end it.
   const portal = usePortal(baseUrl, portalOptions, visible);
   const { snapshot } = portal;
-  const nav = useRemoteNavigation<DialogId>({
+  const nav = useRemoteNavigation({
     root: rootRef,
-    parents,
     onExitRequest: () =>
       calibrating ? leaveCalibration() : nav.openDialog('exit'),
     // Focus is placed once the screen has its controls: the service has
@@ -165,22 +156,18 @@ export function TvApp({
   // Capture, lights and the slim stream encoding are set up only in this
   // portal, never in this UI.
   const portalAddress = slim ? draft.prysm_address : ownPortal;
-  const status = tvStatus(
+  const screen = tvScreen({
+    flavor,
     link,
     draft,
-    snapshot
+    portal: snapshot
       ? {
           lights: !!snapshot.settings.output,
-          address: portalAddress,
           lighting: lightingSituation(snapshot),
+          control: snapshot.control,
           issue: snapshot.device.issue ?? null,
         }
       : null,
-  );
-  const screen = tvScreen({
-    flavor,
-    status,
-    state,
     changing: tv.changing,
     portalAddress,
   });
@@ -207,7 +194,7 @@ export function TvApp({
   }
 
   function primary() {
-    switch (status.action) {
+    switch (screen.action) {
       case 'setup':
         return void tv.setup();
       case 'retry':
@@ -227,7 +214,6 @@ export function TvApp({
     try {
       if (portal.snapshot?.target !== 'screen_sync')
         await portal.setTarget('screen_sync');
-      // Hidden meanwhile: hiding ends calibration, so it does not open.
       if (pageShown()) setCalibrating(portalAddress);
     } catch (reason) {
       tv.say(
@@ -245,7 +231,6 @@ export function TvApp({
     // Best effort: the engine also ends calibration 10 minutes after the last pattern.
     portal.endCalibration().catch(() => {});
   }
-  // Hiding the app ends calibration, like Back.
   const hidden = useEffectEvent(() => {
     if (calibrating) leaveCalibration();
   });
@@ -287,7 +272,7 @@ export function TvApp({
   return (
     // The handlers only follow pointer and focus to support remote navigation.
     <div
-      className={`tv${status.ready ? ' ready' : ''}`}
+      className={`tv${screen.ready ? ' ready' : ''}`}
       onMouseOver={nav.onMouseOver}
       onFocus={nav.onFocus}
     >

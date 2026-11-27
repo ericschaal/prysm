@@ -183,7 +183,7 @@ python3 -m unittest discover -s packaging/webos/tests   # in cargo xtask check s
 python3 packaging/webos/ipk.py verify dist/prysm-tv-full.ipk
 ```
 
-With the SDK, check the Luna and GLib bindings against its headers:
+The binding check reads the Luna and GLib headers from the webOS SDK. It also checks the VTCapture bindings against the checked-in C++ exception bridge and vendor header.
 
 ```sh
 WEBOS_SDK=/path/to/sdk cargo xtask codegen --check --luna

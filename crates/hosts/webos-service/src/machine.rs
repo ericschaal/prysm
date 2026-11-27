@@ -1,13 +1,14 @@
 //! The supervisor's decisions as a pure state machine: inputs and the current
-//! time in, effects out. No I/O, no clock; every rule is table-tested.
+//! time in, effects out.
 //!
 //! - [`phase`]: where the worker is, with what is valid only there.
 //! - [`recovery`]: what follows a failed worker, the one reading of an
 //!   escalation and its one automatic recovery, a restart.
 use crate::preferences::Preferences;
-use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
+use crate::state::{self, Power, State};
 use prysm_webos_link::{
-    Command, Event, FullArgs, KILL_AFTER, LightingTarget, SILENCE, SlimArgs, Video, WorkerStatus,
+    Command, Event, FullArgs, KILL_AFTER, LightingTarget, PrysmAddress, SILENCE, SlimArgs, Video,
+    WorkerStatus,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -17,7 +18,7 @@ use std::time::Instant;
 mod phase;
 mod recovery;
 use phase::{Phase, Report, Run, Sent, Stopping, Then};
-use recovery::{After, Lost, Restart, after};
+use recovery::{After, WorkerStage, after, fail_fast};
 
 pub const LOG_LINES: usize = 20;
 
@@ -32,10 +33,14 @@ pub enum Input {
     /// Full only: the lighting target the app chose. Slim ignores it (the
     /// service refuses it first).
     Target(LightingTarget),
+    /// Full only: request the engine's remembered mode.
+    Resume,
     /// Slim only: frames should flow. Full ignores it (the service refuses
     /// it first).
     Enabled(bool),
     Worker(Event),
+    /// Whether the supervisor is receiving video notifications.
+    VideoObservation(bool),
     /// A line for the state's tail: the supervisor's or the worker's log.
     Log(String),
     /// The worker's event stream broke (bad line, oversized, truncated).
@@ -43,8 +48,7 @@ pub enum Input {
     SpawnFailed(String),
     /// Reaped: the process no longer exists.
     WorkerExited(Exit),
-    /// The worker let go ([`Effect::Abandon`]) was reaped at last, or
-    /// waiting for it failed: it no longer exists.
+    /// The worker let go ([`Effect::Abandon`]) was confirmed gone.
     LetGoReaped,
     Tick,
     Shutdown,
@@ -88,10 +92,11 @@ pub enum Spec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Package {
     Full {
-        settings: PathBuf,
-        listen: SocketAddr,
-        /// The engine target, reported by the worker and used at spawn.
+        args: FullArgs,
+        /// The target last requested or reported.
         target: LightingTarget,
+        /// An explicit user request still to dispatch.
+        target_pending: Option<TargetRequest>,
     },
     Slim {
         /// Whether frames should flow.
@@ -99,21 +104,16 @@ enum Package {
     },
 }
 
-impl Package {
-    /// What the TV app sees of the package while the worker is at
-    /// `process`, with the running worker's `report`.
-    fn published(&self, process: Process, report: Option<&Report>) -> state::Package {
-        match self {
-            Self::Full { target, .. } => state::Package::Full {
-                target: *target,
-                worker: FullWorker::new(process, report.and_then(Report::full)),
-            },
-            Self::Slim { enabled } => state::Package::Slim {
-                enabled: *enabled,
-                worker: SlimWorker::new(process, report.and_then(Report::slim)),
-            },
-        }
-    }
+enum WantedWorker<'a> {
+    Full(&'a FullArgs),
+    Slim(&'a PrysmAddress),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetRequest {
+    Set(LightingTarget),
+    Remembered,
+    RecoverSync,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +128,7 @@ pub struct Machine {
     unreadable: Option<String>,
     log: VecDeque<String>,
     shutdown: bool,
+    observes_video: bool,
 }
 
 impl Machine {
@@ -149,9 +150,9 @@ impl Machine {
         Self {
             package: match spec {
                 Spec::Full { settings, listen } => Package::Full {
-                    settings,
-                    listen,
+                    args: FullArgs { settings, listen },
                     target: intent,
+                    target_pending: None,
                 },
                 Spec::Slim => Package::Slim {
                     enabled: intent != LightingTarget::Off,
@@ -164,6 +165,7 @@ impl Machine {
             unreadable: None,
             log: VecDeque::new(),
             shutdown: false,
+            observes_video: false,
         }
     }
 
@@ -195,7 +197,11 @@ impl Machine {
     /// Shut down and no worker left.
     #[must_use]
     pub fn finished(&self) -> bool {
-        self.shutdown && matches!(self.phase, Phase::Idle | Phase::Asking(_) | Phase::LetGo(_))
+        self.shutdown
+            && matches!(
+                self.phase,
+                Phase::Idle | Phase::Asking(_) | Phase::LetGo(..)
+            )
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
@@ -216,22 +222,34 @@ impl Machine {
                 }
             }
             Input::Preferences(preferences) => self.set_preferences(preferences, now, &mut effects),
-            Input::Target(target) => self.set_target(target, &mut effects),
+            Input::Target(target) => self.set_target(TargetRequest::Set(target), &mut effects),
+            Input::Resume => self.set_target(TargetRequest::Remembered, &mut effects),
             Input::Enabled(enabled) => self.set_enabled(enabled),
             Input::Worker(event) => self.worker_event(event, now, &mut effects),
+            Input::VideoObservation(available) if available != self.observes_video => {
+                self.observes_video = available;
+                if self.running() {
+                    effects.push(Effect::Send(Command::ObserveVideo { available }));
+                }
+            }
+            Input::VideoObservation(_) => {}
             Input::Log(line) => self.note(line),
-            Input::WorkerBroken(why) => self.lose(Lost::Broken(why), now, &mut effects),
+            Input::WorkerBroken(why) => self.broken_link(why, now, &mut effects),
             Input::SpawnFailed(why) => {
                 if let Phase::Running(run) = &self.phase {
-                    let follows = after(run.restart, Lost::Spawn(why).failure());
+                    let follows = after(
+                        run.stage,
+                        fail_fast(format!("cannot start the worker: {why}")),
+                    );
                     self.gone(follows, now, &mut effects);
                 }
             }
             Input::WorkerExited(exit) => self.exited(exit, now, &mut effects),
-            // `reconcile` starts a worker if one is wanted, with its restart.
             Input::LetGoReaped => {
-                if let Phase::LetGo(_) = self.phase {
+                if let Phase::LetGo(then) = &mut self.phase {
+                    let then = std::mem::replace(then, Then::Idle);
                     self.phase = Phase::Idle;
+                    self.apply_exit_action(then, now, &mut effects);
                 }
             }
             Input::Tick => self.tick(now, &mut effects),
@@ -255,38 +273,21 @@ impl Machine {
     #[must_use]
     pub fn state(&self) -> State {
         State {
-            package: self.package.published(self.process(), self.reported()),
+            package: match self.package {
+                Package::Full { target, .. } => state::Package::Full {
+                    target,
+                    worker: self.phase.full_worker(),
+                },
+                Package::Slim { enabled } => state::Package::Slim {
+                    enabled,
+                    worker: self.phase.slim_worker(),
+                },
+            },
             preferences: self.preferences.clone(),
             power: self.power,
             video: self.video,
             unreadable: self.unreadable.clone(),
             log: self.log.iter().cloned().collect(),
-        }
-    }
-
-    /// Where the worker is, with what the person is asked there: also
-    /// while the worker that failed stops, and what a running worker asks.
-    /// A restart is never asked.
-    fn process(&self) -> Process {
-        match &self.phase {
-            Phase::Idle => Process::Stopped,
-            Phase::Running(run) => Process::Running(run.problem()),
-            Phase::Stopping(stopping) => Process::Stopping {
-                portal: stopping.portal.clone(),
-                problem: match &stopping.then {
-                    Then::Ask(problem) => Some(problem.clone()),
-                    Then::Idle | Then::Restart => None,
-                },
-            },
-            Phase::Asking(problem) | Phase::LetGo(problem) => Process::Asking(problem.clone()),
-        }
-    }
-
-    /// The running worker's report; none without one.
-    fn reported(&self) -> Option<&Report> {
-        match &self.phase {
-            Phase::Running(run) => Some(&run.report),
-            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_) => None,
         }
     }
 
@@ -302,38 +303,18 @@ impl Machine {
         }
     }
 
-    fn wanted(&self) -> bool {
-        self.spawn_arguments().is_some()
-    }
-
-    /// The worker's arguments while one is wanted: awake and not shut down,
-    /// and for slim enabled with a receiver.
-    fn spawn_arguments(&self) -> Option<Vec<String>> {
+    fn wanted_worker(&self) -> Option<WantedWorker<'_>> {
         if self.shutdown || !self.power.awake() {
             return None;
         }
         match &self.package {
-            // The portal stays up while awake, whatever the lighting.
-            Package::Full {
-                settings,
-                listen,
-                target,
-            } => Some(
-                FullArgs {
-                    settings: settings.clone(),
-                    listen: *listen,
-                    target: *target,
-                }
-                .to_args(),
-            ),
-            Package::Slim { enabled } => {
-                let prysm = self
-                    .preferences
-                    .prysm_address
-                    .clone()
-                    .filter(|_| *enabled)?;
-                Some(SlimArgs { prysm }.to_args())
-            }
+            Package::Full { args, .. } => Some(WantedWorker::Full(args)),
+            Package::Slim { enabled: true } => self
+                .preferences
+                .prysm_address
+                .as_ref()
+                .map(WantedWorker::Slim),
+            Package::Slim { enabled: false } => None,
         }
     }
 
@@ -342,61 +323,61 @@ impl Machine {
     /// decide the rest.
     fn reconcile(&mut self, now: Instant, effects: &mut Vec<Effect>) {
         match self.phase {
-            Phase::Idle => {
-                if let Some(arguments) = self.spawn_arguments() {
-                    self.spawn(arguments, Restart::Available, now, effects);
-                }
-            }
-            Phase::Running(_) if !self.wanted() => self.end(now, effects),
-            Phase::Running(_) | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_) => {}
+            Phase::Idle => self.spawn(WorkerStage::Starting, now, effects),
+            Phase::Running(_) if self.wanted_worker().is_none() => self.end(now, effects),
+            Phase::Running(_) | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(..) => {}
         }
     }
 
-    fn spawn(
-        &mut self,
-        arguments: Vec<String>,
-        restart: Restart,
-        now: Instant,
-        effects: &mut Vec<Effect>,
-    ) {
+    fn spawn(&mut self, stage: WorkerStage, now: Instant, effects: &mut Vec<Effect>) {
+        let Some(worker) = self.wanted_worker() else {
+            self.phase = Phase::Idle;
+            return;
+        };
+        let arguments = match worker {
+            WantedWorker::Full(args) => args.to_args(),
+            WantedWorker::Slim(prysm) => SlimArgs {
+                prysm: prysm.clone(),
+            }
+            .to_args(),
+        };
+        if stage == WorkerStage::Restarting
+            && let Package::Full {
+                target: LightingTarget::ScreenSync,
+                target_pending,
+                ..
+            } = &mut self.package
+        {
+            target_pending.get_or_insert(TargetRequest::RecoverSync);
+        }
         effects.push(Effect::Spawn(arguments));
-        effects.push(Effect::Send(Command::Video {
-            video: self.effective_video(),
-        }));
         self.phase = Phase::Running(Run {
             heard: now,
             report: Report::new(&self.package),
-            restart,
+            stage,
             ended: None,
         });
-    }
-
-    /// The restart: a new worker at once, its restart spent (idle while
-    /// none is wanted).
-    fn respawn(&mut self, now: Instant, effects: &mut Vec<Effect>) {
-        self.phase = Phase::Idle;
-        if let Some(arguments) = self.spawn_arguments() {
-            self.spawn(arguments, Restart::Spent, now, effects);
+        self.send_target(effects);
+        if self.observes_video {
+            effects.push(Effect::Send(Command::ObserveVideo { available: true }));
         }
+        effects.push(Effect::Send(Command::Video {
+            video: self.effective_video(),
+        }));
     }
 
     /// Stop a running worker; `then` follows its exit. Only a running
     /// worker is stopped.
     fn stop(&mut self, then: Then, now: Instant, effects: &mut Vec<Effect>) {
-        self.phase = match std::mem::replace(&mut self.phase, Phase::Idle) {
-            Phase::Running(run) => {
-                effects.push(Effect::Terminate);
-                Phase::Stopping(Stopping {
-                    at: now + KILL_AFTER,
-                    sent: Sent::Terminate,
-                    then,
-                    portal: run.report.full().and_then(|status| status.portal.clone()),
-                })
-            }
-            phase @ (Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_)) => {
-                phase
-            }
-        };
+        if let Phase::Running(run) = &self.phase {
+            effects.push(Effect::Terminate);
+            self.phase = Phase::Stopping(Stopping {
+                at: now + KILL_AFTER,
+                sent: Sent::Terminate,
+                then,
+                portal: run.report.full().and_then(|status| status.portal.clone()),
+            });
+        }
     }
 
     /// The stop the person or the TV asked for (no longer wanted, new
@@ -414,18 +395,21 @@ impl Machine {
     /// chosen is kept, and applies once it no longer exists.
     fn dismiss(&mut self) {
         match &mut self.phase {
-            Phase::Idle | Phase::LetGo(_) => {}
-            Phase::Running(run) => run.restart = Restart::Available,
+            Phase::LetGo(then) => *then = Then::Idle,
+            Phase::Running(run) if run.stage == WorkerStage::Restarting => {
+                run.stage = WorkerStage::Starting;
+            }
+            Phase::Idle | Phase::Running(_) => {}
             Phase::Stopping(stopping) => stopping.then = Then::Idle,
             Phase::Asking(_) => self.phase = Phase::Idle,
         }
     }
 
     /// What follows the exit of a worker stopped as `follows` says.
-    fn then(&mut self, follows: After) -> Then {
+    fn exit_action(&mut self, follows: After) -> Then {
         match follows {
             After::Restart(why) => {
-                self.restarting(&why);
+                self.note(format!("restarting the worker: {why}"));
                 Then::Restart
             }
             After::GiveUp(problem) | After::Ask(problem) => Then::Ask(problem),
@@ -435,29 +419,20 @@ impl Machine {
     /// A worker that is gone (exited, never started): a new one at once, or
     /// the person is asked, as `follows` says.
     fn gone(&mut self, follows: After, now: Instant, effects: &mut Vec<Effect>) {
-        match follows {
-            After::Restart(why) => {
-                self.restarting(&why);
-                self.respawn(now, effects);
-            }
-            After::GiveUp(problem) | After::Ask(problem) => self.phase = Phase::Asking(problem),
-        }
+        let then = self.exit_action(follows);
+        self.apply_exit_action(then, now, effects);
     }
 
-    /// A restart is never shown as a failure: its cause goes to the tail.
-    fn restarting(&mut self, why: &str) {
-        self.note(format!("restarting the worker: {why}"));
-    }
-
-    /// The supervisor lost a running worker for `lost`: it is stopped. Why
-    /// it said its run ends, if it did, wins.
-    fn lose(&mut self, lost: Lost, now: Instant, effects: &mut Vec<Effect>) {
-        let Phase::Running(run) = &mut self.phase else {
+    fn broken_link(&mut self, why: String, now: Instant, effects: &mut Vec<Effect>) {
+        let Phase::Running(run) = &self.phase else {
             return;
         };
-        let failure = run.ended.take().unwrap_or_else(|| lost.failure());
-        let follows = after(run.restart, failure);
-        let then = self.then(follows);
+        let failure = run
+            .ended
+            .clone()
+            .unwrap_or_else(|| fail_fast(format!("worker link broke: {why}")));
+        let follows = after(run.stage, failure);
+        let then = self.exit_action(follows);
         self.stop(then, now, effects);
     }
 
@@ -478,7 +453,6 @@ impl Machine {
         let relaunch = matches!(self.package, Package::Slim { .. })
             && self.preferences.prysm_address != preferences.prysm_address;
         self.preferences = preferences;
-        // Saved: the file is readable again.
         self.unreadable = None;
         if relaunch {
             // New worker settings: the old worker ends, and `reconcile`
@@ -490,25 +464,41 @@ impl Machine {
     /// Full: the person's choice ([`Machine::dismiss`]); the worker stays
     /// wanted whatever the target, and a running one is sent it, with the
     /// next sequence number.
-    fn set_target(&mut self, target: LightingTarget, effects: &mut Vec<Effect>) {
+    fn set_target(&mut self, request: TargetRequest, effects: &mut Vec<Effect>) {
         let Package::Full {
-            target: current, ..
+            target,
+            target_pending,
+            ..
         } = &mut self.package
         else {
             return;
         };
-        *current = target;
+        if let TargetRequest::Set(requested) = request {
+            *target = requested;
+        }
+        *target_pending = Some(request);
         self.dismiss();
-        if let Phase::Running(Run {
-            report: Report::Full { sent, .. },
-            ..
-        }) = &mut self.phase
+        self.send_target(effects);
+    }
+
+    fn send_target(&mut self, effects: &mut Vec<Effect>) {
+        if let Package::Full { target_pending, .. } = &mut self.package
+            && let Phase::Running(Run {
+                report: Report::Full { sent, .. },
+                ..
+            }) = &mut self.phase
+            && let Some(request) = target_pending.take()
         {
             *sent += 1;
-            effects.push(Effect::Send(Command::Target {
-                target,
-                sequence: *sent,
-            }));
+            let command = match request {
+                TargetRequest::Set(target) => Command::Target {
+                    target,
+                    sequence: *sent,
+                },
+                TargetRequest::Remembered => Command::Resume { sequence: *sent },
+                TargetRequest::RecoverSync => Command::RecoverScreenSync { sequence: *sent },
+            };
+            effects.push(Effect::Send(command));
         }
     }
 
@@ -533,63 +523,49 @@ impl Machine {
                 }
                 return;
             }
-            Phase::Idle | Phase::Asking(_) | Phase::LetGo(_) => return,
+            Phase::Idle | Phase::Asking(_) | Phase::LetGo(..) => return,
         };
         run.heard = now;
         match event {
             Event::Status(status) => self.report(status, now, effects),
-            Event::Failed(failure) => run.ended = Some(failure),
+            Event::Initialized {} if run.ended.is_none() => run.stage = WorkerStage::Stable,
+            Event::Initialized {} => {}
+            Event::Failed(failure) => {
+                if run.ended.is_none() {
+                    run.ended = Some(failure);
+                }
+            }
         }
     }
 
-    /// A running worker's report. A working state ([`Report::worked`])
-    /// gives its restart back; a full worker's failure that a new process
-    /// recovers stops it, any other keeps it running.
+    /// A full worker's failure that requires a new process stops it.
+    /// Other reports leave the worker running.
     fn report(&mut self, status: WorkerStatus, now: Instant, effects: &mut Vec<Effect>) {
         let Phase::Running(run) = &mut self.phase else {
             return;
         };
-        let (target, failure) = match &status {
-            WorkerStatus::Full(full) => (Some((full.target, full.applied)), full.failure.clone()),
-            WorkerStatus::Slim(_) => (None, None),
-        };
+        if run.ended.is_some() {
+            return;
+        }
         if !run.report.keep(status) {
             let why = "the worker reported the other package's status";
-            return self.lose(Lost::Broken(why.into()), now, effects);
+            return self.broken_link(why.into(), now, effects);
         }
-        if run.report.worked() {
-            run.restart = Restart::Available;
-        }
-        let restart = run.restart;
-        if let Some((target, applied)) = target {
-            self.follow(target, applied);
-        }
-        let Some(failure) = failure else {
+        let Some(current) = run.report.current_full() else {
             return;
         };
-        let then = match after(restart, failure) {
+        if let Package::Full { target, .. } = &mut self.package {
+            *target = current.target;
+        }
+        let Some(failure) = current.failure.clone() else {
+            return;
+        };
+        let then = match after(run.stage, failure) {
             // It keeps running, published from its report ([`Run::problem`]).
             After::Ask(_) => return,
-            follows @ (After::Restart(_) | After::GiveUp(_)) => self.then(follows),
+            follows @ (After::Restart(_) | After::GiveUp(_)) => self.exit_action(follows),
         };
         self.stop(then, now, effects);
-    }
-
-    /// Full: take the worker's target (also changed in the portal) from a
-    /// report that `applied` the last target sent; an older report was sent
-    /// before the worker read it.
-    fn follow(&mut self, target: LightingTarget, applied: u64) {
-        if let Package::Full {
-            target: current, ..
-        } = &mut self.package
-            && let Phase::Running(Run {
-                report: Report::Full { sent, .. },
-                ..
-            }) = &self.phase
-            && applied >= *sent
-        {
-            *current = target;
-        }
     }
 
     /// Reaped. A running worker ended for why it said, else for its exit;
@@ -597,16 +573,23 @@ impl Machine {
     fn exited(&mut self, exit: Exit, now: Instant, effects: &mut Vec<Effect>) {
         match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Running(run) => {
-                let failure = run.ended.unwrap_or_else(|| Lost::Exited(exit).failure());
-                self.gone(after(run.restart, failure), now, effects);
+                let message = match exit {
+                    Exit::Code(code) => format!("worker exited with code {code}"),
+                    Exit::Signal(signal) => format!("worker killed by signal {signal}"),
+                };
+                let follows = run.after_disconnect(message);
+                self.gone(follows, now, effects);
             }
-            Phase::Stopping(stopping) => match stopping.then {
-                // `reconcile` starts the next worker if one is wanted.
-                Then::Idle => {}
-                Then::Restart => self.respawn(now, effects),
-                Then::Ask(problem) => self.phase = Phase::Asking(problem),
-            },
-            phase @ (Phase::Idle | Phase::Asking(_) | Phase::LetGo(_)) => self.phase = phase,
+            Phase::Stopping(stopping) => self.apply_exit_action(stopping.then, now, effects),
+            phase @ (Phase::Idle | Phase::Asking(_) | Phase::LetGo(..)) => self.phase = phase,
+        }
+    }
+
+    fn apply_exit_action(&mut self, then: Then, now: Instant, effects: &mut Vec<Effect>) {
+        match then {
+            Then::Idle => {}
+            Then::Restart => self.spawn(WorkerStage::Restarting, now, effects),
+            Then::Ask(problem) => self.phase = Phase::Asking(problem),
         }
     }
 
@@ -616,7 +599,7 @@ impl Machine {
     #[must_use]
     pub fn next_due(&self) -> Option<Instant> {
         match self.phase {
-            Phase::Idle | Phase::Asking(_) | Phase::LetGo(_) => None,
+            Phase::Idle | Phase::Asking(_) | Phase::LetGo(..) => None,
             Phase::Running(Run { heard, .. }) => Some(heard + SILENCE),
             Phase::Stopping(Stopping { at, .. }) => Some(at),
         }
@@ -626,7 +609,12 @@ impl Machine {
         match &mut self.phase {
             Phase::Running(run) => {
                 if now.duration_since(run.heard) >= SILENCE {
-                    self.lose(Lost::Silent, now, effects);
+                    let follows = run.after_disconnect(format!(
+                        "worker sent nothing for {} s",
+                        SILENCE.as_secs()
+                    ));
+                    let then = self.exit_action(follows);
+                    self.stop(then, now, effects);
                 }
             }
             Phase::Stopping(stopping) if now >= stopping.at => match stopping.sent {
@@ -635,18 +623,13 @@ impl Machine {
                     stopping.at = now + KILL_AFTER;
                     stopping.sent = Sent::Kill;
                 }
-                // It may still hold the capture, however it was stopped: the
-                // person is asked, whatever its restart, while it exists.
                 Sent::Kill => {
                     effects.push(Effect::Abandon);
-                    let After::Ask(problem) = after(Restart::Available, Lost::Abandoned.failure())
-                    else {
-                        unreachable!("a worker let go is asked about")
-                    };
-                    self.phase = Phase::LetGo(problem);
+                    let then = std::mem::replace(&mut stopping.then, Then::Idle);
+                    self.phase = Phase::LetGo(then);
                 }
             },
-            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_) => {}
+            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(..) => {}
         }
     }
 }

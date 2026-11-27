@@ -1,8 +1,8 @@
 //! Where the worker is, with what is valid only there.
 use super::Package;
-use super::recovery::{After, Restart, after};
-use crate::state::Problem;
-use prysm_webos_link::{Failure, FullStatus, LightingTarget, SlimStatus, WorkerStatus};
+use super::recovery::{After, WorkerStage, after};
+use crate::state::{Asked, FullWorker, Problem, SlimWorker};
+use prysm_webos_link::{Failure, Fix, FullStatus, KILL_AFTER, SlimStatus, WorkerStatus};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,10 +14,66 @@ pub(super) enum Phase {
     /// action ([`super::Machine::dismiss`]).
     Asking(Problem),
     /// A worker let go after its kill may still exist and hold the capture:
-    /// the person is asked to restart the TV. Left only once it no longer
-    /// exists ([`super::Input::LetGoReaped`]); no action of the person or
-    /// the TV can answer it.
-    LetGo(Problem),
+    /// the person is asked to restart the TV. The next decision can change
+    /// with intent, but it waits for [`super::Input::LetGoReaped`].
+    LetGo(Then),
+}
+
+fn unreaped_worker() -> Problem {
+    Problem {
+        asked: Asked::Ask(Fix::RestartTv),
+        message: format!(
+            "worker not reaped {} s after its kill",
+            KILL_AFTER.as_secs()
+        ),
+    }
+}
+
+impl Phase {
+    pub(super) fn full_worker(&self) -> FullWorker {
+        match self {
+            Self::Idle => FullWorker::Stopped,
+            Self::Running(run) => {
+                let report = run.report.full();
+                FullWorker::Running {
+                    capturing: report.is_some_and(|report| report.capturing),
+                    fps: report.and_then(|report| report.fps),
+                    lights: report.and_then(|report| report.lights),
+                    portal: report.and_then(|report| report.portal.clone()),
+                    problem: run.problem(),
+                }
+            }
+            Self::Stopping(stop) => FullWorker::Stopping {
+                portal: stop.portal.clone(),
+                problem: stop.problem(),
+            },
+            Self::Asking(problem) => FullWorker::Asking {
+                problem: problem.clone(),
+            },
+            Self::LetGo(_) => FullWorker::Asking {
+                problem: unreaped_worker(),
+            },
+        }
+    }
+
+    pub(super) fn slim_worker(&self) -> SlimWorker {
+        match self {
+            Self::Idle => SlimWorker::Stopped,
+            Self::Running(run) => {
+                let SlimStatus { capturing, link } = run.report.slim().cloned().unwrap_or_default();
+                SlimWorker::Running { capturing, link }
+            }
+            Self::Stopping(stop) => SlimWorker::Stopping {
+                problem: stop.problem(),
+            },
+            Self::Asking(problem) => SlimWorker::Asking {
+                problem: problem.clone(),
+            },
+            Self::LetGo(_) => SlimWorker::Asking {
+                problem: unreaped_worker(),
+            },
+        }
+    }
 }
 
 /// A running worker.
@@ -26,7 +82,7 @@ pub(super) struct Run {
     /// When it last sent a line.
     pub(super) heard: Instant,
     pub(super) report: Report,
-    pub(super) restart: Restart,
+    pub(super) stage: WorkerStage,
     /// Why it says its run ends ([`prysm_webos_link::Event::Failed`]): its
     /// exit follows.
     pub(super) ended: Option<Failure>,
@@ -36,9 +92,8 @@ impl Run {
     /// What it asks of the person while it runs: why its run ends, else
     /// its report's failure (full; a slim worker's are its link's own).
     pub(super) fn problem(&self) -> Option<Problem> {
-        let reported = || self.report.full()?.failure.as_ref();
-        let failure = self.ended.as_ref().or_else(reported)?;
-        match after(self.restart, failure.clone()) {
+        let failure = self.ended.as_ref().or_else(|| self.report.failure())?;
+        match after(self.stage, failure.clone()) {
             After::Restart(_) => None,
             After::GiveUp(problem) | After::Ask(problem) => Some(problem),
         }
@@ -55,6 +110,15 @@ pub(super) struct Stopping {
     /// Full: the portal address it last reported, until it was stopped and
     /// since (the portal answers until it exits).
     pub(super) portal: Option<String>,
+}
+
+impl Stopping {
+    fn problem(&self) -> Option<Problem> {
+        match &self.then {
+            Then::Ask(problem) => Some(problem.clone()),
+            Then::Idle | Then::Restart => None,
+        }
+    }
 }
 
 /// The last signal a stopping worker was sent.
@@ -118,28 +182,18 @@ impl Report {
         true
     }
 
-    /// Whether the worker shows a working state, which gives its restart
-    /// back ([`Restart`]): frames arrive (slim, or full screen sync; screen
-    /// sync waiting for video does not count), or, full, the effects target
-    /// it was last sent is applied, with no failure and no lights issue.
-    ///
-    /// `Off` never counts: no fact in the report says it works, and a
-    /// stopped engine without a failure is also what every first status
-    /// says, so a worker that crashes after it would restart for ever.
-    pub(super) fn worked(&self) -> bool {
+    pub(super) fn failure(&self) -> Option<&Failure> {
+        self.current_full()?.failure.as_ref()
+    }
+
+    /// The full report that has applied the last command sent to this worker.
+    pub(super) fn current_full(&self) -> Option<&FullStatus> {
         match self {
             Self::Full {
                 sent,
                 status: Some(status),
-            } => {
-                status.capturing
-                    || (status.target == LightingTarget::Effects
-                        && status.applied >= *sent
-                        && status.failure.is_none()
-                        && status.lights.is_none())
-            }
-            Self::Full { status: None, .. } => false,
-            Self::Slim(status) => status.as_ref().is_some_and(|status| status.capturing),
+            } if status.applied >= *sent => Some(status),
+            _ => None,
         }
     }
 

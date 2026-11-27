@@ -97,7 +97,6 @@ define_class!(
             self.guarded("captureFailed:", || self.fail_and_wake(failure(notification)));
         }
 
-        // Not guarded: setting the ivars and NSObject's `init` do not panic.
         // SAFETY: `init` takes the allocation and returns it initialised and
         // retained, or nil: `Allocated<Self>` in, `Option<Retained<Self>>` out.
         #[unsafe(method_id(init))]
@@ -121,9 +120,8 @@ impl Delegate {
         rate: NonZeroU32,
         now: Instant,
     ) -> Retained<Self> {
-        // SAFETY: `init` is the method defined above, which takes the fresh
-        // allocation and returns it initialised; NSObject's `init` never
-        // returns nil, so the non-optional `Retained` holds.
+        // SAFETY: our `init` takes a fresh allocation and returns a retained
+        // delegate or nil. objc2 checks for nil when constructing `Retained`.
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
         *this.ivars().capture.lock().expect("capture mutex poisoned") = Some(CaptureState {
             sink,
@@ -235,8 +233,6 @@ impl Delegate {
                 self.fail(error);
                 capture.sink.wake();
             }
-            // Only an interruption restarts, and a session is never
-            // interrupted: it delivers again when its source does.
             Verdict::Continue | Verdict::Restart => {}
         }
     }
@@ -445,7 +441,6 @@ mod tests {
         let sink = Arc::new(Count::default());
         let delegate = Delegate::new(sink.clone(), RATE, start);
         let unusable = sample(kCVPixelFormatType_32BGRA);
-        // A second's worth, then the rest of three seconds at the rate.
         let period = Duration::from_secs(1) / RATE.get();
         for frame in 0..RATE.get() * 3 {
             delegate.deliver(&unusable, start + period * frame);
@@ -478,8 +473,6 @@ mod tests {
             sample(kCVPixelFormatType_422YpCbCr8_yuvs),
         );
         let stall = stall_timeout(RATE);
-        // Two seconds of bad buffers, ten times, each run broken by a frame
-        // or a stall before it lasts the three that fail capture.
         let mut now = start;
         for run in 0..10 {
             for _ in 0..RATE.get() * 2 {

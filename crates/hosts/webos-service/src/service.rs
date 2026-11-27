@@ -16,18 +16,22 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, warn};
 
-/// Largest accepted request payload.
-pub const MAX_PAYLOAD: usize = 4096;
-/// Delay before a subscription that is not live is made again: at start
-/// until its first good reply, and after an error reply or one that is not
-/// subscribed. The TV's service may not be registered yet (boot) or may have
-/// restarted, and nothing else brings a failed subscription back. A live
-/// one is left alone: an hour on a TV showed it reports every change by
-/// itself, however long the gap.
+pub use prysm_webos_luna_sys::MAX_PAYLOAD;
+/// Retry interval for a subscription without a successful subscribed reply.
 pub const RESUBSCRIBE: Duration = Duration::from_secs(5);
 
-/// A Luna method this service registers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A Luna method this service registers, in registration order.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+    strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "camelCase", const_into_str)]
 pub enum Method {
     GetState,
     SetPreferences,
@@ -39,24 +43,12 @@ pub enum Method {
 }
 
 impl Method {
-    pub const ALL: [Self; 5] = [
-        Self::GetState,
-        Self::SetPreferences,
-        Self::SetTarget,
-        Self::SetEnabled,
-        Self::Uninstall,
-    ];
+    pub const ALL: [Self; 5] = *<Self as strum::VariantArray>::VARIANTS.as_array().unwrap();
 
     /// The method's Luna name.
     #[must_use]
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::GetState => "getState",
-            Self::SetPreferences => "setPreferences",
-            Self::SetTarget => "setTarget",
-            Self::SetEnabled => "setEnabled",
-            Self::Uninstall => "uninstall",
-        }
+        self.into_str()
     }
 
     fn parse(name: &str) -> Option<Self> {
@@ -65,13 +57,9 @@ impl Method {
 }
 
 /// The Luna names of [`Method::ALL`], in registration order.
-pub const METHODS: [&str; 5] = [
-    Method::ALL[0].name(),
-    Method::ALL[1].name(),
-    Method::ALL[2].name(),
-    Method::ALL[3].name(),
-    Method::ALL[4].name(),
-];
+pub const METHODS: [&str; 5] = *<Method as strum::VariantNames>::VARIANTS
+    .as_array()
+    .unwrap();
 /// Subscription key of `getState`.
 pub const STATE_KEY: &str = "/getState";
 
@@ -95,6 +83,15 @@ impl Renewals {
         match watch {
             Watch::Power => &mut self.power,
             Watch::Video => &mut self.video,
+        }
+    }
+
+    fn observed(&mut self, watch: Watch, live: bool, now: Instant) {
+        let due = self.of(watch);
+        if live {
+            *due = None;
+        } else {
+            due.get_or_insert(now + RESUBSCRIBE);
         }
     }
 }
@@ -158,22 +155,6 @@ pub enum ErrorKind {
     SaveFailed,
     /// The bus could not read the call or send the reply.
     Internal,
-}
-
-/// A failed call: its kind and the text for people.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Refusal {
-    kind: ErrorKind,
-    text: String,
-}
-
-impl Refusal {
-    fn new(kind: ErrorKind, text: impl Into<String>) -> Self {
-        Self {
-            kind,
-            text: text.into(),
-        }
-    }
 }
 
 /// A successful state reply: [`State`] with LS2's `returnValue`.
@@ -260,12 +241,6 @@ pub struct Config {
     pub spec: Spec,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Uninstall {
-    No,
-    Requested,
-}
-
 pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     config: Config,
     machine: Machine,
@@ -277,13 +252,12 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     wait_failed: bool,
     renew: Renewals,
     video_context: Option<Value>,
-    published: Option<String>,
     /// `tv.json` as last read or saved; the default while it is unreadable,
     /// so the next save replaces it.
     file: PreferencesFile,
     /// The intent last given to the store.
     remembered: Option<LightingTarget>,
-    uninstall: Uninstall,
+    uninstall_requested: bool,
 }
 
 impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
@@ -335,10 +309,9 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 video: Some(now + RESUBSCRIBE),
             },
             video_context: None,
-            published: None,
             file,
             remembered: resumed,
-            uninstall: Uninstall::No,
+            uninstall_requested: false,
         }
     }
 
@@ -359,8 +332,8 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     ) -> Reply {
         match self.try_request(bus, method, sender, payload, now) {
             Ok(reply) => reply,
-            Err(Refusal { kind, text }) => Reply {
-                payload: encode_reply(&ErrorReply::new(kind, text)),
+            Err(error) => Reply {
+                payload: encode_reply(&error),
                 subscribe: false,
             },
         }
@@ -373,45 +346,45 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         sender: &str,
         payload: &str,
         now: Instant,
-    ) -> Result<Reply, Refusal> {
+    ) -> Result<Reply, ErrorReply> {
         if payload.len() > MAX_PAYLOAD {
-            return Err(Refusal::new(
+            return Err(ErrorReply::new(
                 ErrorKind::TooLarge,
                 format!("payload exceeds {MAX_PAYLOAD} bytes"),
             ));
         }
         let Some(method) = Method::parse(method) else {
-            return Err(Refusal::new(
+            return Err(ErrorReply::new(
                 ErrorKind::UnknownMethod,
                 format!("unknown method `{method}`"),
             ));
         };
         if method != Method::GetState && sender != self.config.app_id {
             // Checked before the payload is even parsed.
-            return Err(Refusal::new(
+            return Err(ErrorReply::new(
                 ErrorKind::Forbidden,
                 format!("only {} may change Prysm", self.config.app_id),
             ));
         }
-        if self.uninstall == Uninstall::Requested {
-            return Err(Refusal::new(
+        if self.uninstall_requested {
+            return Err(ErrorReply::new(
                 ErrorKind::Removing,
                 "the service is being removed",
             ));
         }
         let name = method.name();
         let invalid = |why: &dyn std::fmt::Display| {
-            Refusal::new(
+            ErrorReply::new(
                 ErrorKind::InvalidRequest,
                 format!("invalid {name} request: {why}"),
             )
         };
         let parse_error = |error: serde_json::Error| invalid(&error);
         // Only objects: serde would also accept a struct as an array.
-        let payload = match serde_json::from_str::<Value>(payload).map_err(parse_error)? {
-            Value::Object(object) => Value::Object(object),
-            _ => return Err(invalid(&"expected an object")),
-        };
+        let payload: Value = serde_json::from_str(payload).map_err(parse_error)?;
+        if !payload.is_object() {
+            return Err(invalid(&"expected an object"));
+        }
         match method {
             Method::GetState => {
                 let request: GetStateRequest =
@@ -427,14 +400,14 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 let flavor = self.config.flavor;
                 preferences
                     .validate(flavor)
-                    .map_err(|why| Refusal::new(ErrorKind::InvalidPreferences, why))?;
+                    .map_err(|why| ErrorReply::new(ErrorKind::InvalidPreferences, why))?;
                 // Only the package's own fields change; the rest of the
                 // file is written back as read.
                 let mut file = self.file.clone();
                 file.replace(&preferences, flavor);
                 self.store
                     .save(&file)
-                    .map_err(|error| Refusal::new(ErrorKind::SaveFailed, chain(&error)))?;
+                    .map_err(|error| ErrorReply::new(ErrorKind::SaveFailed, chain(&error)))?;
                 self.file = file;
                 self.input(bus, Input::Preferences(preferences), now);
                 Ok(self.state_reply())
@@ -443,7 +416,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 self.only_for(Flavor::Full, name)?;
                 let request: SetTargetRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
-                self.input(bus, Input::Target(request.target), now);
+                self.input(bus, request.target.input(), now);
                 Ok(self.state_reply())
             }
             Method::SetEnabled => {
@@ -455,7 +428,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             }
             Method::Uninstall => {
                 let UninstallRequest {} = serde_json::from_value(payload).map_err(parse_error)?;
-                self.uninstall = Uninstall::Requested;
+                self.uninstall_requested = true;
                 self.input(bus, Input::Shutdown, now);
                 Ok(Reply {
                     payload: encode_reply(&DoneReply::default()),
@@ -466,11 +439,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     }
 
     /// Refuse `method`, the other package's, before its request is decoded.
-    fn only_for(&self, flavor: Flavor, method: &str) -> Result<(), Refusal> {
+    fn only_for(&self, flavor: Flavor, method: &str) -> Result<(), ErrorReply> {
         if self.config.flavor == flavor {
             return Ok(());
         }
-        Err(Refusal::new(
+        Err(ErrorReply::new(
             ErrorKind::WrongPackage,
             format!("{method} is only for the {} package", flavor.as_str()),
         ))
@@ -481,12 +454,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let reading = serde_json::from_str(payload)
             .ok()
             .and_then(|value: Value| observe::power(&value));
-        let slot = self.renew.of(Watch::Power);
-        if reading.is_some() {
-            *slot = None;
-        } else {
-            slot.get_or_insert(now + RESUBSCRIBE);
-        }
+        self.renew.observed(Watch::Power, reading.is_some(), now);
         self.input(bus, Input::Power(reading.unwrap_or(Power::Unknown)), now);
     }
 
@@ -494,14 +462,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     pub fn video(&mut self, bus: &mut impl Bus, payload: &str, now: Instant) {
         let value = serde_json::from_str(payload).unwrap_or(Value::Null);
         let reading = observe::video(&value);
-        let slot = self.renew.of(Watch::Video);
-        if reading.live {
-            *slot = None;
-        } else {
-            // The reading is Unknown until it is live: capture still tries,
-            // bounded by the adapter.
-            slot.get_or_insert(now + RESUBSCRIBE);
-        }
+        self.renew.observed(Watch::Video, reading.live, now);
         if let Some(context) = reading.context {
             let changed = self
                 .video_context
@@ -513,6 +474,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             }
         }
         self.input(bus, Input::Video(reading.video), now);
+        self.input(bus, Input::VideoObservation(reading.live), now);
     }
 
     /// A line for the state's tail.
@@ -549,7 +511,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if !self.machine.finished() {
             return true;
         }
-        if self.uninstall == Uninstall::Requested
+        if self.uninstall_requested
             && let Err(error) = self.installer.uninstall()
         {
             error!(error = %chain(&error), "uninstall failed");
@@ -642,7 +604,6 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 }
                 Effect::Send(command) => {
                     if let Some(worker) = &mut self.worker {
-                        // A worker that stopped reading is exiting; its exit follows.
                         let _ = worker.send(&command);
                     }
                 }
@@ -670,13 +631,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                         warn!("letting go of a worker not reaped after its kill");
                     }
                 }
-                Effect::Publish => {
-                    let payload = self.state_json(Some(true));
-                    if self.published.as_ref() != Some(&payload) {
-                        bus.publish(&payload);
-                        self.published = Some(payload);
-                    }
-                }
+                Effect::Publish => bus.publish(&self.state_json(Some(true))),
             }
         }
         if let Some(why) = failed_spawn {
@@ -711,9 +666,30 @@ pub struct GetStateRequest {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct SetTargetRequest {
-    /// What the lights do: off, screen sync, or their own effects.
-    #[cfg_attr(feature = "schema", schema(value_type = crate::schema::LightingTargetSchema))]
-    pub target: LightingTarget,
+    pub target: SetTargetChoice,
+}
+
+/// Lighting intent accepted by the full TV service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub enum SetTargetChoice {
+    Off,
+    ScreenSync,
+    Effects,
+    /// Request On in the mode persisted by the engine.
+    Remembered,
+}
+
+impl SetTargetChoice {
+    fn input(self) -> Input {
+        match self {
+            Self::Off => Input::Target(LightingTarget::Off),
+            Self::ScreenSync => Input::Target(LightingTarget::ScreenSync),
+            Self::Effects => Input::Target(LightingTarget::Effects),
+            Self::Remembered => Input::Resume,
+        }
+    }
 }
 
 /// `setEnabled` request (slim package).

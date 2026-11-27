@@ -22,8 +22,9 @@ from prysm_acceptance.checks import Failed
 from prysm_acceptance.options import Cell, Delivery, Flavour, Platform, Source
 from prysm_acceptance.prysm_api import SessionState, Target
 from prysm_acceptance.transport import Result
-from prysm_acceptance.tv import Encoding, Power, Video
+from prysm_acceptance.tv import Power, Video
 from prysm_acceptance.web import Reply
+from prysm_acceptance.wire_generated import Encoding
 
 GENERATED = Path(__file__).resolve().parents[3] / 'frontend/packages/contracts/generated'
 EXAMPLE = Path(__file__).resolve().parents[1] / 'config.example.toml'

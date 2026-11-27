@@ -219,7 +219,6 @@ read line"#
     woken();
     assert!(matches!(worker.drain()[..], [Output::Event(_)]));
     assert!(!events_ended(&worker), "the output is still open");
-    // The worker closes its output once it reads this.
     worker.send(&Command::ResetVideo {}).unwrap();
     woken();
     assert!(events_ended(&worker), "said before the wake");

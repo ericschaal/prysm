@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { httpColorsClient } from '@prysm/application-client/http';
+import { httpPortalClient } from '@prysm/application-client/http';
 import { ApplicationError, reconnectDelayMs } from '@prysm/application-client';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
@@ -35,7 +35,7 @@ test('the HTTP colors client follows the base URL, decodes events, skips newer k
     ),
     sse(`data: ${JSON.stringify({ ...colors, top: [[256, 0, 0]] })}\n\n`),
   ];
-  const client = httpColorsClient({
+  const client = httpPortalClient({
     baseUrl: 'http://192.168.1.20:8787/',
     fetch: async (url, init) => {
       urls.push(url);
@@ -69,7 +69,7 @@ test('the HTTP colors client follows the base URL, decodes events, skips newer k
 test('aborting a colors stream cancels the request', async () => {
   let cancelled = 0;
   let signal;
-  const client = httpColorsClient({
+  const client = httpPortalClient({
     fetch: async (url, init) => {
       signal = init.signal;
       assert.equal(url, '/api/v1/colors/stream');
@@ -159,7 +159,6 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
         /^rgb\(\d+ \d+ \d+\)$/,
         'coloured: full strength',
       );
-    // The top-left field comes from red LEDs, the top-right from blue ones.
     const [lr, , lb] = led('--live-a').match(/\d+/g).map(Number);
     const [rr, , rb] = led('--live-b').match(/\d+/g).map(Number);
     assert(lr > lb && rb > rr);
@@ -276,7 +275,6 @@ test('a black scene is a colourless moonlight; a refused or ended stream falls b
       }),
     );
     await flush();
-    // Black: a faint colourless moonlight, never the designed colours.
     for (const pool of ['--live-a', '--live-b', '--live-c', '--live-d'])
       assert.equal(led(pool), moonlight, pool);
     // Grey LEDs give white light, brighter than the moonlight.
@@ -334,4 +332,27 @@ test('without a colors client Home writes no colours: the moonlight stays', asyn
   } finally {
     await portal.unmount();
   }
+});
+
+test('a colors stream that finishes opening after Home unmounts is closed unread', async () => {
+  const opening = Promise.withResolvers();
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    (snapshot) => ({ ...snapshot, ...running }),
+    { colors: { colors: () => opening.promise } },
+  );
+  await portal.unmount();
+  let closed = 0;
+  let reads = 0;
+  opening.resolve({
+    close: () => closed++,
+    events: (async function* () {
+      reads++;
+      yield { type: 'idle' };
+    })(),
+  });
+  await flush();
+  assert.equal(closed, 1);
+  assert.equal(reads, 0);
 });

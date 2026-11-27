@@ -1,6 +1,5 @@
-// A capture that fails: the card says so, offers Try again, and stays usable.
-// The sender refuses every connection, as a TV whose capture is busy does,
-// so lighting started again (a settings save retries it) fails again too.
+// A capture that fails: the card says why and Power can make a fresh request.
+// The sender initially refuses every connection, as a busy TV would.
 import { expect, test, type Sender } from './prysm';
 
 const reason = 'The TV is busy';
@@ -11,11 +10,11 @@ let busy: Sender;
 test.beforeEach(async ({ page, startSender }) => {
   busy = startSender('--refuse', reason);
   await page.goto('/');
-  await page.getByRole('button', { name: 'Power' }).click();
+  await page.locator('[data-power]').click();
   await busy.waitFor('refused');
 });
 
-test('a refused capture is shown, and Try again starts screen sync', async ({
+test('a refused capture is shown, and Power makes a fresh request', async ({
   page,
   prysm,
   startSender,
@@ -38,7 +37,7 @@ test('a refused capture is shown, and Try again starts screen sync', async ({
   // The TV is free again: its next connection streams.
   await busy.stop();
   startSender();
-  await card.getByRole('button', { name: 'Try again' }).click();
+  await card.locator('[data-power]').click();
   // The card's words for screen readers (the problem line folds away).
   await expect(card.locator('[role=status][aria-live]')).toHaveText(
     /^Lights follow your screen/,
@@ -55,30 +54,19 @@ test('a refused capture is shown, and Try again starts screen sync', async ({
     .toBe('screen_sync no failure');
 });
 
-test('changing brightness on a failed card does not leave it loading', async ({
+test('a stopped request leaves only Power as a lighting control', async ({
   page,
-  prysm,
 }) => {
   const card = page.getByRole('region', { name: 'Your lights' });
   await expect(card.getByRole('alert')).toBeVisible();
-  const slider = page.getByRole('slider', { name: 'Brightness' });
-  await slider.focus();
-  await slider.press('ArrowLeft');
-  const changed = Number(await slider.inputValue());
-  await expect
-    .poll(
-      async () => (await prysm.state()).settings.processing.brightness_percent,
-    )
-    .toBe(changed);
-
-  // Nothing is in progress: the card, its power button and Try again are idle.
-  await expect(card).toHaveAttribute('aria-busy', 'false');
-  await expect(card.getByRole('button', { name: 'Power' })).toHaveAttribute(
-    'aria-busy',
+  await expect(card.locator('[data-power]')).toBeEnabled();
+  await expect(card.locator('[data-power]')).toHaveAttribute(
+    'aria-pressed',
     'false',
   );
-  await expect(card.getByRole('alert')).toBeVisible();
-  await expect(card.getByRole('button', { name: 'Try again' })).toBeEnabled();
+  await expect(card.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  await expect(card.getByRole('radiogroup', { name: 'Mode' })).toHaveCount(0);
+  await expect(card.getByRole('slider', { name: 'Brightness' })).toHaveCount(0);
 });
 
 test('the video source page shows the failure where it is fixed', async ({
@@ -87,7 +75,7 @@ test('the video source page shows the failure where it is fixed', async ({
   await page.goto('/#/settings/video');
   const editor = page.getByRole('form', { name: 'Video source' });
   const now = editor.getByRole('status', { name: 'Video source now' });
-  await expect(now).toContainText('No picture');
+  await expect(now).toContainText('Video source not working');
   // Prysm's own words, shown as they are.
   await expect(now.getByText(reason)).toBeVisible();
   // Nothing saved here on this visit: no previous source to go back to.

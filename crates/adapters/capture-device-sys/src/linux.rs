@@ -73,8 +73,6 @@ fn yuv_colorimetry(
             | v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_M
             | v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_BG
             | v4l2_colorspace_V4L2_COLORSPACE_JPEG => YuvStandardMatrix::Bt601,
-            // Default, sRGB (what uvcvideo reports without a colour-matching
-            // descriptor) and the rest name no video matrix.
             _ => crate::unspecified_matrix(height),
         },
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601 | v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SYCC => {
@@ -200,11 +198,9 @@ fn configure_stream(
         let format = device
             .format()
             .context("failed to read negotiated capture format")?;
-        // Drivers may substitute dimensions; require the configured native size.
         if format.width != width || format.height != height {
             continue;
         }
-        // A driver may also substitute the format: only those read here count.
         let pixels = match Captured::of(format.fourcc) {
             Some(Captured::Yuyv) if format.width.is_multiple_of(2) => {
                 let (range, matrix) = negotiated_colorimetry(device)?;
@@ -231,7 +227,6 @@ fn configure_stream(
     })
 }
 
-// The shared guard's copy of the timestamp-type bits matches the kernel's.
 const _: () = assert!(
     crate::capture_time::V4L2_TIMESTAMP_MASK == v4l::v4l_sys::V4L2_BUF_FLAG_TIMESTAMP_MASK
         && crate::capture_time::V4L2_TIMESTAMP_MONOTONIC
@@ -257,6 +252,112 @@ fn captured_at(buffer: &v4l::v4l_sys::v4l2_buffer) -> Option<Instant> {
     )
 }
 
+pub(crate) fn check_device(path: &str) -> Result<()> {
+    Device::with_path(path)
+        .map(drop)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => CaptureError::DeviceNotFound {
+                device: Some(path.to_owned()),
+                source: Some(error),
+            },
+            std::io::ErrorKind::PermissionDenied => CaptureError::Denied {
+                device: path.to_owned(),
+                source: error,
+            },
+            _ if matches!(error.raw_os_error(), Some(libc::ENODEV | libc::ENXIO)) => {
+                CaptureError::DeviceNotFound {
+                    device: Some(path.to_owned()),
+                    source: Some(error),
+                }
+            }
+            _ => CaptureError::Backend(anyhow::Error::new(error).context("checking video device")),
+        })
+}
+
+pub(crate) fn watch_device(path: &str, stop: &prysm_ports::Hangup) -> std::io::Result<bool> {
+    use rustix::event::{EventfdFlags, PollFd, PollFlags, eventfd, poll};
+    use rustix::fs::inotify::{CreateFlags, WatchFlags, add_watch, init};
+    use std::path::Path;
+    use std::sync::Arc;
+
+    let wake = Arc::new(eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK)?);
+    let signal = wake.clone();
+    let Some(_registration) = stop.on_cut(move || {
+        let _ = rustix::io::write(&signal, &1u64.to_ne_bytes());
+    }) else {
+        return Ok(false);
+    };
+    let device = Path::new(path);
+    loop {
+        // A configured by-id directory can itself disappear with its last camera.
+        let directory = device
+            .ancestors()
+            .skip(1)
+            .find(|path| path.is_dir())
+            .unwrap_or(Path::new("."));
+        let events = init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
+        match add_watch(
+            &events,
+            directory,
+            WatchFlags::CREATE
+                | WatchFlags::MOVED_TO
+                | WatchFlags::ATTRIB
+                | WatchFlags::DELETE_SELF,
+        ) {
+            Ok(_) => {}
+            Err(rustix::io::Errno::NOENT) if !stop.is_cut() => continue,
+            Err(error) => return Err(error.into()),
+        }
+        if !matches!(check_device(path), Err(CaptureError::DeviceNotFound { .. })) {
+            return Ok(!stop.is_cut());
+        }
+        let mut fds = [
+            PollFd::new(&events, PollFlags::IN),
+            PollFd::new(wake.as_ref(), PollFlags::IN),
+        ];
+        match poll(&mut fds, None) {
+            Ok(_) if !fds[1].revents().is_empty() => return Ok(false),
+            Ok(_) | Err(rustix::io::Errno::INTR) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+    use prysm_ports::Hangup;
+
+    #[test]
+    fn a_waiting_watch_accepts_device_arrival_and_can_be_cancelled() {
+        let directory = tempfile::tempdir().unwrap();
+        let device = directory.path().join("by-id").join("video");
+        for connected in [true, false] {
+            let stop = Hangup::default();
+            let monitor = stop.clone();
+            let path = device.to_str().unwrap().to_owned();
+            let (ready, observed) = std::sync::mpsc::sync_channel(1);
+            let watcher = std::thread::spawn(move || {
+                ready.send(watch_device(&path, &monitor)).unwrap();
+            });
+            if connected {
+                std::fs::create_dir(device.parent().unwrap()).unwrap();
+                std::fs::File::create(&device).unwrap();
+            } else {
+                stop.cut();
+            }
+
+            let result = observed.recv_timeout(Duration::from_secs(3));
+            stop.cut();
+            watcher.join().unwrap();
+            assert_eq!(result.unwrap().unwrap(), connected);
+            if connected {
+                std::fs::remove_file(&device).unwrap();
+            }
+        }
+    }
+}
+
 /// Nodes that capture video (not metadata or output nodes), by number.
 pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
     let Ok(entries) = std::fs::read_dir("/dev") else {
@@ -273,7 +374,6 @@ pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
     nodes
         .into_iter()
         .filter_map(|(_, path)| {
-            // Opening a node and asking its capabilities starts nothing.
             let caps = Device::with_path(&path).ok()?.query_caps().ok()?;
             caps.capabilities
                 .contains(v4l::capability::Flags::VIDEO_CAPTURE)
@@ -291,7 +391,6 @@ const EVEN: Span = Span::new(0, u32::MAX, 2).expect("a span");
 pub(crate) fn list_formats(path: &str) -> Option<Vec<Mode>> {
     use v4l::framesize::FrameSizeEnum;
     use v4l::v4l_sys::v4l2_frmsizetypes_V4L2_FRMSIZE_TYPE_CONTINUOUS;
-    // Opening a node and asking it starts nothing.
     let device = Device::with_path(path).ok()?;
     let descriptions = device.enum_formats().ok()?;
     // `configure_frame_rate` fails on a device that cannot set its interval.
@@ -308,7 +407,6 @@ pub(crate) fn list_formats(path: &str) -> Option<Vec<Mode>> {
         .filter_map(|description| Some((description.fourcc, Captured::of(description.fourcc)?)))
     {
         let yuyv = captured == Captured::Yuyv;
-        // A driver that cannot list what it captures leaves it unknown.
         for size in device.enum_framesizes(fourcc).ok()? {
             let (width, height, rates) = match size.size {
                 FrameSizeEnum::Discrete(size) => (
@@ -521,7 +619,6 @@ mod tests {
             yuv_colorimetry(colorspace, encoding, quantization, height).unwrap()
         };
         let limited = |matrix| (YuvRange::Limited, matrix);
-        // No matrix named: by picture height.
         for colorspace in [0, v4l2_colorspace_V4L2_COLORSPACE_SRGB] {
             assert_eq!(
                 colorimetry(colorspace, 0, 0, 1080),
@@ -532,7 +629,6 @@ mod tests {
                 limited(YuvStandardMatrix::Bt601)
             );
         }
-        // Named by the colorspace or the encoding: whatever the height.
         assert_eq!(
             colorimetry(v4l2_colorspace_V4L2_COLORSPACE_SMPTE170M, 0, 0, 1080),
             limited(YuvStandardMatrix::Bt601)

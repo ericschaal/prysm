@@ -9,8 +9,7 @@ use openh264::formats::YUVSlices;
 
 pub(crate) struct Software {
     inner: openh264::encoder::Encoder,
-    /// I420 planes converted from NV12.
-    planes: Vec<u8>,
+    chroma: Vec<u8>,
 }
 
 impl Software {
@@ -19,7 +18,6 @@ impl Software {
         let config = EncoderConfig::new()
             .bitrate(BitRate::from_bps(bitrate))
             .max_frame_rate(FrameRate::from_hz(rate))
-            // TCP preserves references; every session starts with an IDR.
             .intra_frame_period(IntraFramePeriod::from_num_frames(0))
             .complexity(Complexity::Low)
             .profile(Profile::Baseline)
@@ -29,7 +27,7 @@ impl Software {
             .vui(VuiConfig::bt709());
         Ok(Self {
             inner: openh264::encoder::Encoder::with_api_config(OpenH264API::from_source(), config)?,
-            planes: Vec::new(),
+            chroma: Vec::new(),
         })
     }
 
@@ -42,22 +40,18 @@ impl Software {
         uv: &[u8],
         output: &mut Vec<u8>,
     ) -> Result<Option<FrameKind>, H264Error> {
-        let n = width * height;
-        self.planes.resize(n + n / 2, 0);
-        let (luma, chroma) = self.planes.split_at_mut(n);
-        let (u, v) = chroma.split_at_mut(n / 4);
-        luma.copy_from_slice(y);
-        for ((pair, u), v) in uv
+        self.chroma.resize(uv.len(), 0);
+        let (u, v) = self.chroma.split_at_mut(uv.len() / 2);
+        for (&[cb, cr], (u, v)) in uv
             .as_chunks::<2>()
             .0
             .iter()
-            .zip(u.iter_mut())
-            .zip(v.iter_mut())
+            .zip(u.iter_mut().zip(v.iter_mut()))
         {
-            *u = pair[0];
-            *v = pair[1];
+            *u = cb;
+            *v = cr;
         }
-        let source = YUVSlices::new((luma, u, v), (width, height), (width, width / 2, width / 2));
+        let source = YUVSlices::new((y, u, v), (width, height), (width, width / 2, width / 2));
         output.clear();
         let bitstream = self.inner.encode(&source)?;
         let kind = match bitstream.frame_type() {

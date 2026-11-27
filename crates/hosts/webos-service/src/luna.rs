@@ -35,11 +35,10 @@ pub fn serve(
         FsInstaller::new(identity.layout.clone()),
         Instant::now(),
     );
-    let calls = WATCHES;
     let config = sys::Config {
         name: &identity.service,
         methods: &METHODS,
-        calls: &calls,
+        calls: &WATCHES,
         wake,
         refuse,
     };
@@ -87,14 +86,12 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Glue<L, S, I> {
     }
 }
 
-struct LunaBus<'a>(&'a mut sys::Bus);
-
-impl Bus for LunaBus<'_> {
+impl Bus for sys::Bus {
     fn publish(&mut self, payload: &str) {
-        self.0.publish(STATE_KEY, payload);
+        self.publish(STATE_KEY, payload);
     }
     fn resubscribe(&mut self, watch: Watch) {
-        self.0.recall(watch as usize);
+        self.recall(watch as usize);
     }
 }
 
@@ -106,7 +103,7 @@ where
 {
     fn request(&mut self, bus: &mut sys::Bus, request: sys::Request<'_>) -> sys::Response {
         let reply = self.service.request(
-            &mut LunaBus(bus),
+            bus,
             request.method,
             request.sender,
             request.payload,
@@ -121,9 +118,9 @@ where
     fn reply(&mut self, bus: &mut sys::Bus, index: usize, payload: &str) {
         let now = Instant::now();
         if index == Watch::Power as usize {
-            self.service.power(&mut LunaBus(bus), payload, now);
+            self.service.power(bus, payload, now);
         } else if index == Watch::Video as usize {
-            self.service.video(&mut LunaBus(bus), payload, now);
+            self.service.video(bus, payload, now);
         }
     }
 
@@ -133,7 +130,7 @@ where
         // between them, the supervisor's first when not. Anything logged
         // while these are handled wakes the loop for the next poll.
         for line in self.tail.drain() {
-            self.service.log(&mut LunaBus(bus), line, now);
+            self.service.log(bus, line, now);
         }
         if !self.stopping {
             let signal = self.stop.load(Ordering::Relaxed);
@@ -147,10 +144,10 @@ where
             if let Some(why) = why {
                 self.stopping = true;
                 info!(%why, "stopping");
-                self.service.shutdown(&mut LunaBus(bus), now);
+                self.service.shutdown(bus, now);
             }
         }
-        if !self.service.tick(&mut LunaBus(bus), now) {
+        if !self.service.tick(bus, now) {
             return sys::Next::Stop;
         }
         let deadline = self.deadline.filter(|_| !self.stopping);
@@ -194,7 +191,6 @@ mod tests {
         let stop = Arc::new(AtomicUsize::new(0));
         let mut glue = Glue::new(service, Tail::default(), stop.clone(), None);
         let mut bus = sys::Bus::default();
-        // Nothing runs: only the subscriptions' renewal is due.
         assert_eq!(
             glue.poll(&mut bus, now),
             sys::Next::At(now + crate::service::RESUBSCRIBE)

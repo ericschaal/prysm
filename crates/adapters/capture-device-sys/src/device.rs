@@ -73,6 +73,35 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
     })
 }
 
+/// Check whether the selected capture device can be asked about its formats
+/// without starting capture or requesting access.
+pub fn check_device(device: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::check_device(device);
+    #[cfg(target_os = "linux")]
+    return crate::linux::check_device(device);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = device;
+        Err(CaptureError::Backend(anyhow::anyhow!(
+            "video device capture is unsupported on this platform"
+        )))
+    }
+}
+
+/// Block for the selected device to appear or the owning attempt to stop.
+pub fn watch_device(device: &str, stop: &prysm_ports::Hangup) -> std::io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    return Ok(crate::macos::watch_device(device, stop));
+    #[cfg(target_os = "linux")]
+    return crate::linux::watch_device(device, stop);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (device, stop);
+        Ok(false)
+    }
+}
+
 /// Capture `device` (the platform default when `None`) on the calling thread
 /// until `sink` asks to stop or capture fails, then release the device.
 ///

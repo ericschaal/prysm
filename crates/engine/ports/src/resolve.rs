@@ -19,12 +19,9 @@ pub type Lookup = fn(&str, u16) -> io::Result<SocketAddr>;
 /// # Errors
 /// The name does not resolve, or resolves to no address.
 pub fn system_lookup(host: &str, port: u16) -> io::Result<SocketAddr> {
-    let addresses: Vec<SocketAddr> = (host, port).to_socket_addrs()?.collect();
-    addresses
-        .iter()
-        .find(|address| address.is_ipv4())
-        .or_else(|| addresses.first())
-        .copied()
+    (host, port)
+        .to_socket_addrs()?
+        .min_by_key(SocketAddr::is_ipv6)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address"))
 }
 
@@ -160,7 +157,6 @@ mod tests {
         static CALLS: AtomicU32 = AtomicU32::new(0);
         let mut named = Resolver::new("prysm.local", 7380).with_lookup(|host, port| {
             assert_eq!((host, port), ("prysm.local", 7380));
-            // The address changes between calls (a new DHCP lease).
             let n = CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(SocketAddr::from(([192, 168, 1, 20 + n as u8], port)))
         });
@@ -218,7 +214,6 @@ mod tests {
     #[test]
     fn a_cut_ends_the_wait_and_keeps_the_lookup() {
         static CALLS: AtomicU32 = AtomicU32::new(0);
-        // Opened by the test once the cut waits are done.
         static GATE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
         let mut held = Resolver::new("prysm.local", 7380).with_lookup(|_, port| {
             CALLS.fetch_add(1, Ordering::SeqCst);
@@ -233,7 +228,6 @@ mod tests {
             let hangup = hangup.clone();
             thread::spawn(move || hangup.cut())
         };
-        // The lookup cannot answer, so only the cut ends these waits.
         let error = held.resolve(Duration::from_secs(60), &hangup).unwrap_err();
         assert!(matches!(error, CallError::Stopped(Stopping)), "{error}");
         cutting.join().unwrap();

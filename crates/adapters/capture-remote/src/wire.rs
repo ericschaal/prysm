@@ -16,16 +16,9 @@ use std::fmt;
 /// The frame header: format, range and matrix codes, flags, width and height
 /// (big-endian `u16`).
 pub(crate) const HEADER_LEN: usize = 8;
-/// Where each header field is.
-pub(crate) mod at {
-    use std::ops::Range;
-    pub const FORMAT: usize = 0;
-    pub const RANGE: usize = 1;
-    pub const MATRIX: usize = 2;
-    pub const FLAGS: usize = 3;
-    pub const WIDTH: Range<usize> = 4..6;
-    pub const HEIGHT: Range<usize> = 6..8;
-}
+/// Flags occupy byte 3 of the wire header, independently checked by test fixtures.
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) const FLAG_BYTE: usize = 3;
 /// Widest frame or request.
 pub(crate) const MAX_WIDTH: u32 = 1920;
 /// Tallest frame or request.
@@ -77,6 +70,7 @@ impl From<StreamEncoding> for Encoding {
 /// `{"type":"request","width":320,...}`, `{"type":"keyframe"}`. A type this
 /// end does not know is [`FromReceiver::Unknown`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(feature = "fuzzing", derive(Serialize))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum FromReceiver {
     Request(RequestMessage),
@@ -90,14 +84,15 @@ pub(crate) enum FromReceiver {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ToSender {
-    Request(RequestMessage),
+    Request(RemoteSettings),
     Keyframe,
 }
 
 /// The request as it travels: [`RemoteSettings`]' fields, every one
 /// required. The encoding is parsed with the settings, so one this end does
 /// not know is an invalid `encoding`, not a message that fails to decode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(feature = "fuzzing", derive(Serialize))]
 pub(crate) struct RequestMessage {
     width: u32,
     height: u32,
@@ -106,43 +101,18 @@ pub(crate) struct RequestMessage {
     encoding: String,
 }
 
-impl From<RemoteSettings> for RequestMessage {
-    fn from(settings: RemoteSettings) -> Self {
-        let RemoteSettings {
-            width,
-            height,
-            fps,
-            include_ui,
-            encoding,
-        } = settings;
-        Self {
-            width,
-            height,
-            fps,
-            include_ui,
-            encoding: encoding.name().to_owned(),
-        }
-    }
-}
-
 impl TryFrom<RequestMessage> for RemoteSettings {
     type Error = ValidationError;
 
     /// The settings the message asks for, validated.
     fn try_from(message: RequestMessage) -> Result<Self, ValidationError> {
-        let RequestMessage {
-            width,
-            height,
-            fps,
-            include_ui,
-            encoding,
-        } = message;
         let settings = Self {
-            width,
-            height,
-            fps,
-            include_ui,
-            encoding: encoding
+            width: message.width,
+            height: message.height,
+            fps: message.fps,
+            include_ui: message.include_ui,
+            encoding: message
+                .encoding
                 .parse()
                 .map_err(|reason| ValidationError::new("encoding", reason))?,
         };
@@ -398,14 +368,11 @@ impl Header {
                 height: self.height,
             })
         };
-        let mut bytes = [0; HEADER_LEN];
-        bytes[at::FORMAT] = format;
-        bytes[at::RANGE] = range;
-        bytes[at::MATRIX] = matrix;
-        bytes[at::FLAGS] = flags;
-        bytes[at::WIDTH].copy_from_slice(&dimension(self.width)?.to_be_bytes());
-        bytes[at::HEIGHT].copy_from_slice(&dimension(self.height)?.to_be_bytes());
-        Ok(bytes)
+        let [width_hi, width_lo] = dimension(self.width)?.to_be_bytes();
+        let [height_hi, height_lo] = dimension(self.height)?.to_be_bytes();
+        Ok([
+            format, range, matrix, flags, width_hi, width_lo, height_hi, height_lo,
+        ])
     }
 
     /// Raw: exactly the frame's size. H.264: limited-range BT.709 NV12 and
@@ -456,56 +423,52 @@ pub(crate) fn decode_frame(
     let (head, payload) = message
         .split_first_chunk::<HEADER_LEN>()
         .ok_or(WireError::Short(message.len()))?;
-    let dimension = |range: std::ops::Range<usize>| {
-        u32::from(u16::from_be_bytes([
-            head[range.start],
-            head[range.start + 1],
-        ]))
-    };
+    let &[
+        format,
+        range,
+        matrix,
+        flags,
+        width_hi,
+        width_lo,
+        height_hi,
+        height_lo,
+    ] = head;
     let header = Header {
-        width: dimension(at::WIDTH),
-        height: dimension(at::HEIGHT),
-        format: parse_format(head[at::FORMAT], head[at::RANGE], head[at::MATRIX])?,
-        keyframe: encoding == Encoding::H264 && head[at::FLAGS] & KEYFRAME != 0,
+        width: u16::from_be_bytes([width_hi, width_lo]).into(),
+        height: u16::from_be_bytes([height_hi, height_lo]).into(),
+        format: parse_format(format, range, matrix)?,
+        keyframe: encoding == Encoding::H264 && flags & KEYFRAME != 0,
     };
     header.check_payload(encoding, payload.len())?;
     Ok(FrameMessage { header, payload })
 }
 
-fn yuv_code(
-    format: PixelFormat,
-    range: YuvRange,
-    matrix: YuvStandardMatrix,
-) -> Result<(u8, u8), WireError> {
-    let range = match range {
+// Codes belong to Prysm's stream protocol and are independent of the YUV library.
+const MATRICES: [(u8, YuvStandardMatrix); 6] = [
+    (1, YuvStandardMatrix::Bt601),
+    (2, YuvStandardMatrix::Bt709),
+    (3, YuvStandardMatrix::Bt2020),
+    (4, YuvStandardMatrix::Smpte240),
+    (5, YuvStandardMatrix::Bt470_6),
+    (6, YuvStandardMatrix::Fcc),
+];
+
+fn format_code(format: PixelFormat) -> Result<(u8, u8, u8), WireError> {
+    let (layout, range, matrix) = match format {
+        PixelFormat::RGB24 => return Ok((1, 0, 0)),
+        PixelFormat::BGR24 => return Ok((2, 0, 0)),
+        PixelFormat::YUYV { range, matrix } => (3, range, matrix),
+        PixelFormat::NV12 { range, matrix } => (4, range, matrix),
+    };
+    let range_code = match range {
         YuvRange::Limited => 1,
         YuvRange::Full => 2,
     };
-    let matrix = match matrix {
-        YuvStandardMatrix::Bt601 => 1,
-        YuvStandardMatrix::Bt709 => 2,
-        YuvStandardMatrix::Bt2020 => 3,
-        YuvStandardMatrix::Smpte240 => 4,
-        YuvStandardMatrix::Bt470_6 => 5,
-        YuvStandardMatrix::Fcc => 6,
-        YuvStandardMatrix::Custom(..) => return Err(WireError::Format(format)),
-    };
-    Ok((range, matrix))
-}
-
-fn format_code(format: PixelFormat) -> Result<(u8, u8, u8), WireError> {
-    Ok(match format {
-        PixelFormat::RGB24 => (1, 0, 0),
-        PixelFormat::BGR24 => (2, 0, 0),
-        PixelFormat::YUYV { range, matrix } => {
-            let (range, matrix) = yuv_code(format, range, matrix)?;
-            (3, range, matrix)
-        }
-        PixelFormat::NV12 { range, matrix } => {
-            let (range, matrix) = yuv_code(format, range, matrix)?;
-            (4, range, matrix)
-        }
-    })
+    let (matrix_code, _) = MATRICES
+        .into_iter()
+        .find(|(_, value)| *value == matrix)
+        .ok_or(WireError::Format(format))?;
+    Ok((layout, range_code, matrix_code))
 }
 
 fn parse_format(format: u8, range: u8, matrix: u8) -> Result<PixelFormat, WireError> {
@@ -514,37 +477,27 @@ fn parse_format(format: u8, range: u8, matrix: u8) -> Result<PixelFormat, WireEr
         range,
         matrix,
     };
-    let yuv = || -> Result<(YuvRange, YuvStandardMatrix), WireError> {
-        Ok((
-            match range {
+    match (format, range, matrix) {
+        (1, 0, 0) => Ok(PixelFormat::RGB24),
+        (2, 0, 0) => Ok(PixelFormat::BGR24),
+        (3 | 4, ..) => {
+            let range = match range {
                 1 => YuvRange::Limited,
                 2 => YuvRange::Full,
-                _ => return Err(unknown.clone()),
-            },
-            match matrix {
-                1 => YuvStandardMatrix::Bt601,
-                2 => YuvStandardMatrix::Bt709,
-                3 => YuvStandardMatrix::Bt2020,
-                4 => YuvStandardMatrix::Smpte240,
-                5 => YuvStandardMatrix::Bt470_6,
-                6 => YuvStandardMatrix::Fcc,
-                _ => return Err(unknown.clone()),
-            },
-        ))
-    };
-    Ok(match (format, range, matrix) {
-        (1, 0, 0) => PixelFormat::RGB24,
-        (2, 0, 0) => PixelFormat::BGR24,
-        (3, ..) => {
-            let (range, matrix) = yuv()?;
-            PixelFormat::YUYV { range, matrix }
+                _ => return Err(unknown),
+            };
+            let (_, matrix) = MATRICES
+                .into_iter()
+                .find(|(code, _)| *code == matrix)
+                .ok_or(unknown)?;
+            if format == 3 {
+                Ok(PixelFormat::YUYV { range, matrix })
+            } else {
+                Ok(PixelFormat::NV12 { range, matrix })
+            }
         }
-        (4, ..) => {
-            let (range, matrix) = yuv()?;
-            PixelFormat::NV12 { range, matrix }
-        }
-        _ => return Err(unknown),
-    })
+        _ => Err(unknown),
+    }
 }
 
 #[cfg(test)]
@@ -594,20 +547,39 @@ mod tests {
             assert_eq!(got.header, sent);
             assert_eq!(got.payload, payload);
         }
-        // Eight bytes of header, then the payload.
         let bytes = message(
             &header(2, 1, PixelFormat::RGB24),
             Encoding::Raw,
             &[1, 2, 3, 4, 5, 6],
         );
         assert_eq!(bytes, [1, 0, 0, 0, 0, 2, 0, 1, 1, 2, 3, 4, 5, 6]);
-        // The largest raw frame fits.
         let largest = header(MAX_WIDTH, MAX_HEIGHT, PixelFormat::RGB24);
         let len = PixelFormat::RGB24
             .expected_size(MAX_WIDTH, MAX_HEIGHT)
             .unwrap();
         assert!(len <= MAX_PAYLOAD_BYTES);
         largest.encode(Encoding::Raw, len).unwrap();
+    }
+
+    #[test]
+    fn yuv_matrix_codes_match_the_stream_protocol() {
+        use YuvStandardMatrix::{Bt470_6, Bt601, Bt709, Bt2020, Fcc, Smpte240};
+
+        for (code, matrix) in [
+            (1, Bt601),
+            (2, Bt709),
+            (3, Bt2020),
+            (4, Smpte240),
+            (5, Bt470_6),
+            (6, Fcc),
+        ] {
+            let format = PixelFormat::NV12 {
+                range: YuvRange::Limited,
+                matrix,
+            };
+            assert_eq!(format_code(format), Ok((4, 1, code)));
+            assert_eq!(parse_format(4, 1, code), Ok(format));
+        }
     }
 
     #[test]
@@ -633,8 +605,6 @@ mod tests {
                 "{format:?} {width}x{height}"
             );
         }
-        // A raw payload of another size, H.264 of other pixels, empty or
-        // over the payload limit.
         assert_eq!(
             header(2, 1, PixelFormat::RGB24).encode(Encoding::Raw, 5),
             Err(WireError::Length {
@@ -670,7 +640,6 @@ mod tests {
             with(4, &[0, 0]),
             Err(WireError::Dimensions { width: 0, .. })
         ));
-        // One past the largest size, from the header alone.
         assert!(matches!(
             with(4, &[0x07, 0x81]),
             Err(WireError::Dimensions { width: 1921, .. })
@@ -679,7 +648,6 @@ mod tests {
             with(6, &[0x04, 0x39]),
             Err(WireError::Dimensions { height: 1081, .. })
         ));
-        // The payload is the rest of the message: one byte short or long.
         assert_eq!(
             decode_frame(&good[..good.len() - 1], Encoding::Raw),
             Err(WireError::Length {
@@ -697,7 +665,6 @@ mod tests {
             decode_frame(&good[..7], Encoding::Raw),
             Err(WireError::Short(7))
         );
-        // Odd NV12 geometry is not a frame.
         let mut odd = message(&header(4, 2, NV12), Encoding::Raw, &[0; 12]);
         odd[5] = 3;
         assert!(matches!(
@@ -709,16 +676,16 @@ mod tests {
     #[test]
     fn unknown_flag_bits_are_ignored() {
         let mut raw = message(&header(4, 2, PixelFormat::RGB24), Encoding::Raw, &[0; 24]);
-        raw[at::FLAGS] = 0xff;
+        raw[FLAG_BYTE] = 0xff;
         assert_eq!(
             decode_frame(&raw, Encoding::Raw).unwrap().header,
             header(4, 2, PixelFormat::RGB24),
             "no keyframe in a raw stream"
         );
         let mut h264 = message(&header(16, 16, NV12), Encoding::H264, &[0; 7]);
-        h264[at::FLAGS] = 0xfe;
+        h264[FLAG_BYTE] = 0xfe;
         assert!(!decode_frame(&h264, Encoding::H264).unwrap().header.keyframe);
-        h264[at::FLAGS] = 0xff;
+        h264[FLAG_BYTE] = 0xff;
         assert!(decode_frame(&h264, Encoding::H264).unwrap().header.keyframe);
     }
 
@@ -729,7 +696,7 @@ mod tests {
             ..header(640, 280, NV12)
         };
         let bytes = message(&key, Encoding::H264, &[0; 1234]);
-        assert_eq!(bytes[at::FLAGS], KEYFRAME);
+        assert_eq!(bytes[FLAG_BYTE], KEYFRAME);
         let got = decode_frame(&bytes, Encoding::H264).unwrap();
         assert_eq!((got.header, got.payload.len()), (key, 1234));
         let plain = header(640, 280, NV12);
@@ -740,7 +707,6 @@ mod tests {
             decode_frame(&empty[..HEADER_LEN], Encoding::H264),
             Err(WireError::Empty)
         );
-        // Other pixels in an H.264 stream.
         let rgb = message(&header(4, 2, PixelFormat::RGB24), Encoding::Raw, &[0; 24]);
         assert_eq!(
             decode_frame(&rgb, Encoding::H264),
@@ -766,7 +732,7 @@ mod tests {
 
     #[test]
     fn commands_are_tagged_json_and_requests_are_complete() {
-        let text = encode_to_sender(&ToSender::Request(SOFTWARE.into()));
+        let text = encode_to_sender(&ToSender::Request(SOFTWARE));
         assert_eq!(
             text,
             r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false,"encoding":"h264_software"}"#
@@ -780,8 +746,6 @@ mod tests {
             decode_from_receiver(r#"{"type":"keyframe"}"#),
             Ok(FromReceiver::Keyframe)
         );
-        // Every field is required; a request that is not JSON or not a
-        // request fails to decode.
         for bad in [
             r#"{"type":"request"}"#,
             r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false}"#,
@@ -794,7 +758,6 @@ mod tests {
                 "{bad}"
             );
         }
-        // Validated as the settings are.
         assert_eq!(
             settings(r#"{"type":"request","width":321,"height":280,"fps":25,"include_ui":false,"encoding":"raw"}"#)
                 .unwrap_err()
@@ -851,7 +814,6 @@ mod tests {
             r#"{"type":"refused","cause":"encoding","reason":"hardware H.264 encoder cannot start"}"#
         );
         assert_eq!(decode_from_sender(&text), Ok(FromSender::Refused(refusal)));
-        // Cut at a character boundary.
         let long = "é".repeat(MAX_REASON_BYTES);
         let cut = Refusal::new(RefusalCause::Request, &long);
         assert_eq!(cut.reason.len(), MAX_REASON_BYTES);
@@ -892,7 +854,6 @@ mod tests {
             decode_from_sender(r#"{"type":"stats","sent":10}"#),
             Ok(FromSender::Unknown)
         );
-        // Known causes keep their names.
         assert_eq!(
             serde_json::to_string(&RefusalCause::Request).unwrap(),
             r#""request""#
@@ -929,7 +890,6 @@ mod tests {
                 theirs: Some(3)
             }
         );
-        // A list names the highest; unknown entries are skipped.
         assert_eq!(
             version_error(Some(
                 "prysm-capture.v7, chat,prysm-capture.v9 ,prysm-capture.v8"

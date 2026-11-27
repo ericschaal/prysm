@@ -760,14 +760,32 @@ def test_display_check(
 
 
 def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], prysm_api.State]) -> object:
-    """While lighting, `renew` Prysm (a unit restart, a new container): it answers idle with the settings it had,
-    and Screen sync lights WLED from the expected sender again."""
+    """With Screen sync remembered and WLED off, restart and observe confirmed Off before resuming."""
     screen_sync(prysm)
     saved = prysm.state()['settings']
-    state = renew()
-    evidence: dict[str, object] = {'target': state['target'], 'session': session(state)}
+    reply = prysm.set_target(Target.OFF)
+    if reply.status != 204:
+        raise Failed(f'PUT /api/v1/target off: HTTP {reply.status}', reply.json())
+    if wled.wait(lambda si: si['state'].get('on') is False, 10) is None:
+        raise Failed('WLED never confirmed physical Off before restart', wled.si())
+
+    renew()
+    state = prysm.wait(
+        lambda current: current.get('control', {}).get('power') == 'off',
+        10,
+    )
+    if state is None:
+        raise Failed('Prysm did not observe physical Off after restart', prysm.state())
+
+    evidence: dict[str, object] = {
+        'target': state['target'],
+        'session': session(state),
+        'control': state.get('control', {}),
+    }
     if state['target'] != Target.OFF or session(state) != SessionState.STOPPED:
         raise Failed(f'not idle after the restart: target {state["target"]}, session {session(state)}', evidence)
+    if state.get('control', {}).get('remembered') != Target.SCREEN_SYNC:
+        raise Failed('Prysm did not remember Screen sync while Off', evidence)
     if state['settings'] != saved:
         raise Failed('the settings did not come back', {**evidence, 'before': saved, 'after': state['settings']})
     screen_sync(prysm)
@@ -788,36 +806,32 @@ def test_package_user(running: Host, record: Record) -> None:
 @only(Delivery.DEB)
 @planned(
     does=lambda cell, config: [
-        'PUT /api/v1/target screen_sync',
+        'PUT /api/v1/target screen_sync, then off; confirm WLED power off',
         f'$ {commands.deb_systemctl(_ssh_host(cell, config), commands.UnitAction.RESTART).display()}',
-        'GET /api/v1/state until it answers, then PUT /api/v1/target screen_sync',
+        'GET /api/v1/state until physical Off is observed, verify the remembered mode, then resume Screen sync',
     ]
 )
 def test_package_restart(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
-    """The Debian package: a restart of the unit while lighting.
-
-    Active again, idle (as the package documents: a restart leaves the lights off) with the saved settings;
-    Screen sync then lights WLED again."""
+    """The Debian package: restarting with WLED off preserves the selected mode and settings."""
     seam = cast('host_deb.SshDeb', running)
-    record('idle with its settings after the restart; lighting again', _settings_kept(prysm, wled, seam, seam.restart))
+    record('physical Off and Screen sync remembered after restart', _settings_kept(prysm, wled, seam, seam.restart))
 
 
 @only(Delivery.IMAGE)
 @planned(
     does=lambda cell, config: [
-        'PUT /api/v1/target screen_sync',
+        'PUT /api/v1/target screen_sync, then off; confirm WLED power off',
         '$ '
         + commands.image_compose(_ssh_host(cell, config), 'RUN_DIR-CELL', commands.ComposeAction.RECREATE).display(),
-        'GET /api/v1/state until it answers, then PUT /api/v1/target screen_sync',
+        'GET /api/v1/state until physical Off is observed, verify the remembered mode, then resume Screen sync',
     ]
 )
 def test_image_volume(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
     """The image: the settings live on the compose file's volume.
 
-    A new container (`up --force-recreate`) answers idle with the same settings; Screen sync then lights WLED
-    again."""
+    A new container (`up --force-recreate`) preserves the selected mode and settings while WLED is off."""
     seam = cast('host_image.SshImage', running)
-    record('a new container has the settings; lighting again', _settings_kept(prysm, wled, seam, seam.recreate))
+    record('new container preserves Off and the remembered mode', _settings_kept(prysm, wled, seam, seam.recreate))
 
 
 # Last: it stops the host the checks above share.

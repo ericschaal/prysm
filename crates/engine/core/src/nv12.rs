@@ -92,32 +92,14 @@ impl Nv12Row<'_> {
 
 /// A frame cannot be converted to RGB by [`nv12_to_rgb`].
 #[cfg(any(test, feature = "testkit"))]
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConversionError {
+    #[error("expected an NV12 frame")]
     NotNv12,
+    #[error("RGB dimensions exceed the supported buffer size")]
     SizeOverflow,
-    Decode(yuv::YuvError),
-}
-
-#[cfg(any(test, feature = "testkit"))]
-impl std::fmt::Display for ConversionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotNv12 => f.write_str("expected an NV12 frame"),
-            Self::SizeOverflow => f.write_str("RGB dimensions exceed the supported buffer size"),
-            Self::Decode(error) => error.fmt(f),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "testkit"))]
-impl std::error::Error for ConversionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Decode(error) => Some(error),
-            _ => None,
-        }
-    }
+    #[error("{0}")]
+    Decode(#[source] yuv::YuvError),
 }
 
 /// Converts a whole NV12 frame to RGB24 with the `yuv` crate's SIMD path: an
@@ -228,6 +210,14 @@ mod tests {
             let (r, g, b) = view.pixel(x, y);
             assert!(r > g && r > b, "({x}, {y})");
         }
+    }
+
+    #[test]
+    fn decoder_errors_retain_their_message_and_cause() {
+        let error = ConversionError::Decode(yuv::YuvError::PointerOverflow);
+        let cause = std::error::Error::source(&error).unwrap();
+        assert!(cause.is::<yuv::YuvError>());
+        assert_eq!(error.to_string(), cause.to_string());
     }
 
     #[test]

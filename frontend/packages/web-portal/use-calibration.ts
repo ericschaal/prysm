@@ -1,20 +1,11 @@
-import { useReducer, useRef, useState } from 'react';
-import type {
-  CalibrationPattern,
-  TargetReading,
-  Pattern,
-} from '@prysm/application-client';
-import type {
-  CorrectionControls,
-  Processing,
-} from '@prysm/contracts/application';
+import { useReducer, useState } from 'react';
+import { usePortal } from './portal-context';
 import {
   initialWizard,
   losesWork,
   placeAfter,
   screens,
   wizardReducer,
-  type Calibrating,
   type Move,
   type Place,
 } from './calibrate-wizard';
@@ -27,31 +18,11 @@ import {
   noCorrection,
 } from './calibration-model';
 import {
+  editCalibration,
   throttled,
-  useLiveProcessing,
+  useProcessingEditor,
   withCalibrations,
 } from './live-processing';
-
-export interface CalibrateProps {
-  processing: Processing;
-  revision: number;
-  target: TargetReading;
-  /** The pattern the TV shows, absent while not calibrating. */
-  shown: CalibrationPattern | undefined;
-  disabled: boolean;
-  save: (expected: number, processing: Processing) => Promise<number>;
-  /** Light with a processing section unsaved, while a slider is held. */
-  tryProcessing: (processing: Processing) => Promise<unknown>;
-  setCalibration: (pattern: CalibrationPattern | null) => Promise<unknown>;
-  /** Go back to the portal's main page. */
-  leave: () => void;
-}
-
-/** A pattern asked of the TV, and the wizard's place with it. */
-interface Wanted {
-  pattern: Pattern;
-  place: Place;
-}
 
 /**
  * The Calibrate page's work: the wizard's state, the TV's patterns and the
@@ -66,30 +37,19 @@ interface Wanted {
  * TV, with Resume). Finish names the draft, Cancel deletes it and makes the
  * previous calibration active again; each waits for the saves before it.
  */
-export function useCalibration({
-  processing,
-  revision,
-  shown,
-  disabled,
-  save,
-  tryProcessing,
-  setCalibration,
-  leave,
-}: CalibrateProps) {
-  const live = useLiveProcessing({
-    processing,
-    revision,
-    disabled,
-    save,
-    tryProcessing,
-  });
+export function useCalibration(leave: () => void) {
+  const { snapshot, commands } = usePortal();
+  const {
+    calibration: shown,
+    settings: { processing },
+  } = snapshot;
+  const { setCalibration } = commands;
+  const live = useProcessingEditor();
   const calibrations = live.value.calibrations ?? [];
   const [state, dispatch] = useReducer(wizardReducer, initialWizard);
   const { phase } = state;
+  const view = phase.kind === 'ending' ? phase.last : phase;
   const calibrating = phase.kind === 'calibrating' ? phase : null;
-  /** The screen shown: also while the TV's calibration is being ended. */
-  const view: Calibrating | null =
-    phase.kind === 'ending' ? phase.last : calibrating;
   if (shown && calibrating && !calibrating.seen)
     dispatch({ type: 'patternSeen' });
   const unconfirmed = phase.kind === 'start' ? phase.unconfirmed : null;
@@ -102,44 +62,33 @@ export function useCalibration({
   if (confirmed)
     dispatch({ type: 'startConfirmed', startedWith: confirmed.correction });
   /** The TV's patterns: one request at a time, the newest waiting one next. */
-  const [patterns] = useState(() => throttled<Wanted>(0));
-  /** The pattern asked for last; an older one's answer no longer decides. */
-  const newestRef = useRef<Wanted | null>(null);
+  const [patterns] = useState(() => throttled<Place>(0));
 
-  const draftIndex = view
-    ? calibrations.findIndex((calibration) => calibration.id === view.draftId)
-    : -1;
-  const draft = draftIndex >= 0 ? calibrations[draftIndex] : undefined;
-  /** The draft's correction in the processing section. */
-  const path = `processing.calibrations[${draftIndex}].correction`;
-  const typedName = (view?.name ?? draft?.name ?? '').trim();
+  const step = view.kind === 'calibrating' ? view : null;
+  const editor = editCalibration(live, step?.draftId);
+  const draft = editor?.calibration;
+  const typedName = (step?.name ?? draft?.name ?? '').trim();
 
-  /** Go to `place` at once; the TV shows `pattern` after the request on its way. */
-  function request(pattern: Pattern, move: Move, resume = false) {
+  /** Go to `place` at once; the TV shows its pattern after the request on its way. */
+  function request(move: Move, resume = false) {
     if (!calibrating) return;
-    const wanted: Wanted = {
-      pattern,
-      place: placeAfter(calibrating.place, move),
-    };
-    newestRef.current = wanted;
-    dispatch({ type: 'requestSent', place: wanted.place, resume });
+    const wanted = placeAfter(calibrating.place, move);
+    dispatch({ type: 'requestSent', place: wanted, resume });
     patterns.push(wanted, send);
   }
-  async function send(wanted: Wanted) {
+  async function send(wanted: Place) {
     try {
       await setCalibration({
-        pattern: wanted.pattern,
-        uncorrected: wanted.place.uncorrected,
+        pattern: screens[wanted.screen]!.pattern,
+        uncorrected: wanted.uncorrected,
       });
-      dispatch(
-        newestRef.current === wanted
-          ? { type: 'patternShown' }
-          : { type: 'patternShown', more: wanted.place },
-      );
+      dispatch({ type: 'patternShown', place: wanted });
     } catch (error) {
-      // A newer request decides what the TV shows.
-      if (newestRef.current === wanted)
-        dispatch({ type: 'requestFailed', problem: tvProblem(error) });
+      dispatch({
+        type: 'requestFailed',
+        place: wanted,
+        problem: tvProblem(error),
+      });
     }
   }
 
@@ -195,9 +144,6 @@ export function useCalibration({
       });
       return;
     }
-    // Not saved (the failure says why): nothing of the start may stay, in
-    // the draft, which would save itself later, or on the TV. A save whose
-    // answer never came may have run: the state shows it if it did.
     live.reload();
     try {
       await setCalibration(null);
@@ -210,7 +156,6 @@ export function useCalibration({
   async function end(title: string, message: string) {
     dispatch({ type: 'ending' });
     // A pattern still on its way must not show after the end.
-    newestRef.current = null;
     await patterns.settle();
     try {
       await setCalibration(null);
@@ -218,26 +163,6 @@ export function useCalibration({
       // The engine ends it by itself after ten minutes.
     }
     dispatch({ type: 'ended', title, message });
-  }
-
-  /** The draft's correction changed by `change`; `control` is where a failed save shows. */
-  function correct(change: Partial<CorrectionControls>, control: string) {
-    if (!draft) return;
-    const next = {
-      ...draft,
-      correction: { ...draft.correction, ...change },
-    };
-    // The lights follow a held slider at once; its release saves.
-    live.slider.slide(
-      withCalibrations(
-        live.value,
-        calibrations.map((calibration, at) =>
-          at === draftIndex ? next : calibration,
-        ),
-        live.value.active_calibration,
-      ),
-      `${path}.${control}`,
-    );
   }
 
   async function finish() {
@@ -295,15 +220,14 @@ export function useCalibration({
   }
 
   return {
-    state,
-    live,
+    problem: state.problem,
+    target: snapshot.target,
+    scope: live.scope,
+    generation: live.generation,
+    failure: live.failure,
     calibrations,
-    /** The calibrating screen, also shown while calibration is being ended. */
     view,
-    draft,
-    path,
-    /** The name Finish saves, before it is made unique. */
-    typedName,
+    editor,
     nameProblem: nameProblem(typedName, calibrationLimits.name),
     /** The TV no longer shows the patterns (its timeout, or it left them). */
     ended:
@@ -316,22 +240,17 @@ export function useCalibration({
     choose: (from: string) => dispatch({ type: 'sourceChosen', from }),
     start,
     /** Go to `screen`, opened from the check `returnTo` if given. */
-    go: (screen: number, returnTo?: number) =>
-      request(screens[screen]!.pattern, { screen, returnTo }),
+    go: (screen: number, returnTo?: number) => request({ screen, returnTo }),
     /** Show the pattern without correction, or with it again. */
     compare: () => {
       if (!calibrating) return;
       const { place } = calibrating;
-      request(screens[place.screen]!.pattern, {
+      request({
         uncorrected: !place.uncorrected,
       });
     },
     /** Ask the TV to show the patterns again after they ended. */
-    resume: () => {
-      if (calibrating)
-        request(screens[calibrating.place.screen]!.pattern, {}, true);
-    },
-    correct,
+    resume: () => request({}, true),
     name: (name: string) => dispatch({ type: 'named', name }),
     finish,
     /** Cancel: with changes it asks first, else it discards at once. */

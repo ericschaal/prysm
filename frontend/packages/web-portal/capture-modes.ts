@@ -1,34 +1,19 @@
-import { createContext, use, useEffect, useState } from 'react';
-import type {
-  CaptureModesClient,
-  CaptureSettings,
-  Mode,
-} from '@prysm/application-client';
+import { useEffect, useEffectEvent, useState } from 'react';
+import type { CaptureSettings, Mode } from '@prysm/application-client';
+import { useHost } from './portal-context';
 import type { Picture } from './adapters';
 import {
   picturePresets,
-  presetOrder,
+  presetTargets,
   type PicturePreset,
 } from './picture-presets';
 
-/** The portal's lookup of what a capture delivers; set by every host. */
-export const CaptureModesContext = createContext<CaptureModesClient | null>(
-  null,
-);
-
-/**
- * What a capture delivers, as far as the portal knows: still asking, its
- * hardware out of reach, the question itself unanswered, or its modes
- * (none: nothing with these settings). Without an answer, `again` asks
- * once more: nothing announces one, as the state stream carries neither a
- * device being plugged in nor the offer a capture-only TV sends when it
- * tries to connect.
- */
+/** An unanswered probe can be retried. A known source may offer no presets. */
 export type ModesState =
   | { state: 'loading' }
   | { state: 'unknown'; again: () => void }
   | { state: 'failed'; again: () => void }
-  | { state: 'known'; modes: readonly Mode[] };
+  | { state: 'known'; modes: readonly Mode[]; offered: readonly Offered[] };
 
 type Span = Mode['width'];
 type Size = Required<Picture>;
@@ -57,7 +42,12 @@ export const delivers = (
       contains(mode.fps, fps),
   );
 
-const wide = ({ width, height }: Size) => width * 9 === height * 16;
+function preferred(candidate: Size, current: Size) {
+  const wide = candidate.width * 9 === candidate.height * 16;
+  const currentWide = current.width * 9 === current.height * 16;
+  if (wide !== currentWide) return wide;
+  return candidate.width * candidate.height < current.width * current.height;
+}
 
 /**
  * What `modes` deliver for `target`: the target itself where a mode takes
@@ -66,21 +56,16 @@ const wide = ({ width, height }: Size) => width * 9 === height * 16;
  */
 export function resolve(modes: readonly Mode[], target: Size): Size | null {
   if (delivers(modes, target)) return target;
-  const covering = modes.flatMap((mode) => {
+  let best: Size | null = null;
+  for (const mode of modes) {
+    if (!contains(mode.fps, target.fps)) continue;
     const width = atLeast(mode.width, target.width);
     const height = atLeast(mode.height, target.height);
-    return width !== null && height !== null && contains(mode.fps, target.fps)
-      ? [{ width, height, fps: target.fps }]
-      : [];
-  });
-  const pool = covering.some(wide) ? covering.filter(wide) : covering;
-  return pool.reduce<Size | null>(
-    (best, size) =>
-      best === null || size.width * size.height < best.width * best.height
-        ? size
-        : best,
-    null,
-  );
+    if (width === null || height === null) continue;
+    const candidate = { width, height, fps: target.fps };
+    if (!best || preferred(candidate, best)) best = candidate;
+  }
+  return best;
 }
 
 /** A preset as `modes` deliver it. */
@@ -96,17 +81,18 @@ export const sameSize = (a: Size, b: Size) =>
  * would set; presets that come out the same show once, under the first.
  */
 export function offeredPresets(modes: readonly Mode[]): Offered[] {
-  return presetOrder.reduce<Offered[]>((offered, preset) => {
+  const offered: Offered[] = [];
+  for (const { preset } of presetTargets) {
     const size = resolve(modes, picturePresets[preset]);
-    return size && !offered.some((other) => sameSize(other, size))
-      ? [...offered, { preset, ...size }]
-      : offered;
-  }, []);
+    if (!size || offered.some((other) => sameSize(other, size))) continue;
+    offered.push({ preset, ...size });
+  }
+  return offered;
 }
 
 /** Whether `modes` leave nothing to choose: no mode, or none for a preset. */
 export const nothingOffered = (modes: ModesState) =>
-  modes.state === 'known' && offeredPresets(modes.modes).length === 0;
+  modes.state === 'known' && modes.offered.length === 0;
 
 /**
  * Ask what each capture in `queries` delivers: once for each set of
@@ -118,15 +104,12 @@ export const nothingOffered = (modes: ModesState) =>
 export function useEachCaptureModes(
   queries: readonly (CaptureSettings | null)[],
 ): ModesState[] {
-  const client = use(CaptureModesContext);
-  if (!client) throw new Error('Outside the portal.');
+  const client = useHost().captureModes;
   const key = JSON.stringify(queries);
-  /** How often the user asked again; each time asks once more. */
+  const currentQueries = useEffectEvent(() => queries);
   const [attempt, setAttempt] = useState(0);
   const [answer, setAnswer] = useState<{ key: string; states: ModesState[] }>();
   useEffect(() => {
-    const asked = JSON.parse(key) as (CaptureSettings | null)[];
-    // A newer ask answers for the hardware as it is now; leaving ends it.
     const controller = new AbortController();
     const again = () => setAttempt((count) => count + 1);
     const one = (query: CaptureSettings | null): Promise<ModesState> =>
@@ -134,12 +117,16 @@ export function useEachCaptureModes(
         ? client.modes(query, controller.signal).then(
             (modes) =>
               modes.status === 'known'
-                ? { state: 'known', modes: modes.modes }
+                ? {
+                    state: 'known',
+                    modes: modes.modes,
+                    offered: offeredPresets(modes.modes),
+                  }
                 : { state: 'unknown', again },
             () => ({ state: 'failed', again }),
           )
         : Promise.resolve({ state: 'loading' });
-    void Promise.all(asked.map(one)).then((states) => {
+    void Promise.all(currentQueries().map(one)).then((states) => {
       if (!controller.signal.aborted) setAnswer({ key, states });
     });
     return () => controller.abort();
@@ -149,7 +136,6 @@ export function useEachCaptureModes(
     : queries.map(() => ({ state: 'loading' }));
 }
 
-/** `useEachCaptureModes` of one query. */
 export function useCaptureModes(query: CaptureSettings | null): ModesState {
   const [modes = { state: 'loading' }] = useEachCaptureModes([query]);
   return modes;

@@ -1,3 +1,5 @@
+import type { EventStream, SnapshotStream } from './stream';
+import { failureSections, pictures } from '@prysm/contracts/constants';
 import type {
   CalibrationPattern,
   Candidate,
@@ -5,19 +7,19 @@ import type {
   ColorsEvent,
   Failure,
   FailureSection,
-  Input,
   LightingFailure,
   LightingTarget,
   Mode,
   Modes,
-  OutputIssue,
   Pattern,
   Picture,
   PreviewEvent,
   Session,
-  Settings as GeneratedSettings,
-  State,
 } from '@prysm/contracts/application';
+import type {
+  Settings as SettingsReading,
+  State as ApplicationStateReading,
+} from '@prysm/contracts/application-reading';
 
 export type {
   CalibrationPattern,
@@ -30,14 +32,26 @@ export type {
   LightingTarget,
   Mode,
   Modes,
-  OutputIssue,
   Pattern,
   Picture,
   PreviewEvent,
   Session,
 };
+export { consumeStream, type EventStream } from './stream';
 export { same } from './same';
-export { reconnectDelayMs, STALE_MS, streamStep } from './recovery';
+export {
+  reconnectDelayMs,
+  STALE_MS,
+  streamStep,
+  terminalStreamFailure,
+} from './recovery';
+
+export type Input = NonNullable<ApplicationStateReading['input']>;
+export type DeviceReport = ApplicationStateReading['device'];
+export type OutputIssue = NonNullable<DeviceReport['issue']>;
+export type CalibrationReading = NonNullable<
+  ApplicationStateReading['calibration']
+>;
 
 /**
  * The two sides an adapter fills, capture and output: the generated failure
@@ -45,24 +59,11 @@ export { reconnectDelayMs, STALE_MS, streamStep } from './recovery';
  */
 export type AdapterSide = FailureSection;
 
-/**
- * Keyed by every value of a generated union, so the compiler keeps them in
- * step; read with {@link known}.
- */
-export const lightingTargets: Record<LightingTarget, true> = {
-  off: true,
-  screen_sync: true,
-  effects: true,
-};
-export const failureSections: Record<FailureSection, true> = {
-  capture: true,
-  output: true,
-};
-export const pictures: Record<Picture, true> = {
-  arriving: true,
-  quiet: true,
-  refused: true,
-};
+export {
+  failureSections,
+  lightingTargets,
+  pictures,
+} from '@prysm/contracts/constants';
 
 /**
  * Whether frames arrive, as `input` says it; a value newer than this page
@@ -71,20 +72,18 @@ export const pictures: Record<Picture, true> = {
 export const pictureOf = (input: Input): Picture =>
   known(pictures, input.picture, 'quiet');
 
-/** A decoded JSON object's fields, before each is checked. */
 export type Fields = Partial<Record<string, unknown>>;
 
-/** Whether `value` is a JSON object: not `null`, not an array. */
 export const isObject = (value: unknown): value is Fields =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
 export function known<T extends string, F extends string | null | undefined>(
-  values: Record<T, true>,
+  values: readonly T[],
   raw: string,
   fallback: F,
 ): T | F {
-  return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
+  return values.find((value) => value === raw) ?? fallback;
 }
 
 /**
@@ -120,7 +119,7 @@ export function describeOutputIssue(issue: OutputIssue): string {
  * don't answer whatever was chosen: lights that don't answer are a problem;
  * any other issue (a newer one too) is a warning.
  */
-export function outputIssueHeadline(issue: OutputIssue): string {
+export function outputIssueHeadline(issue: string): string {
   return issue === 'unreachable'
     ? 'Can’t reach the lights'
     : 'Not showing screen sync';
@@ -140,7 +139,7 @@ export function whenLightsAnswer(
     case 'screen_sync':
       return 'The lights follow again as soon as they answer.';
     case 'off':
-      return 'The lights switch off as soon as they answer.';
+      return 'Power off could not be confirmed.';
     case 'effects':
       return `${effects} start as soon as the lights answer.`;
     default:
@@ -175,7 +174,6 @@ export function unreachable(value: never): never {
   throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
 }
 
-/** The failure `session` carries, if any. */
 function sessionFailure(session: SessionReading): LightingFailure | null {
   return 'failure' in session ? (session.failure ?? null) : null;
 }
@@ -279,7 +277,6 @@ export function lightingSituation({
       failure,
       at,
       fromEffects,
-      // Settings Prysm can't use never reached the lights.
       effectsOn: fromEffects && (at !== 'output' || unusableSettings(failure)),
     };
   }
@@ -290,20 +287,7 @@ export function lightingSituation({
 export function situationFailure(
   situation: LightingSituation,
 ): LightingFailure | null {
-  switch (situation.kind) {
-    case 'failed':
-    case 'off':
-    case 'effects':
-    case 'unanswered':
-    case 'unknown':
-      return situation.failure;
-    case 'faulted':
-    case 'sync':
-    case 'starting':
-      return null;
-    default:
-      return unreachable(situation);
-  }
+  return 'failure' in situation ? situation.failure : null;
 }
 
 /**
@@ -364,12 +348,7 @@ export function describeSituation(
   }
 }
 
-/**
- * Settings Prysm can't use, whatever the lights were asked to do: they do
- * not validate, or the video source says it can't deliver them. A setting is
- * the fix, so that is all there is to say, even when the field names a side.
- */
-export function unusableSettings(failure: Failure | LightingFailure) {
+export function unusableSettings(failure: { kind: string }) {
   return failure.kind === 'invalid';
 }
 
@@ -387,13 +366,11 @@ export function plainFailure(
   const section = failureSide(failure);
   if (section === 'capture') return 'The video source isn’t working.';
   if (section === 'output') return 'The lights aren’t responding.';
-  // What a target newer than this page tried is not known.
   if (target === 'unknown') return 'Something went wrong.';
   switch (failure.kind) {
     case 'unavailable':
       return 'A device isn’t available right now.';
     case 'busy':
-      // With the lights off there is nothing to try again.
       return target === 'off'
         ? 'Prysm is busy.'
         : 'Prysm is busy. Try again in a moment.';
@@ -408,7 +385,7 @@ export function plainFailure(
 }
 
 /** Generated settings with the host's capture and output section types. */
-export type Settings<C, O> = Omit<GeneratedSettings, 'capture' | 'output'> & {
+export type Settings<C, O> = Omit<SettingsReading, 'capture' | 'output'> & {
   capture?: C;
   output?: O;
 };
@@ -417,7 +394,7 @@ export type Settings<C, O> = Omit<GeneratedSettings, 'capture' | 'output'> & {
  * reads it: a target or session state newer than this page is `unknown`.
  */
 export type ApplicationSnapshot<C, O> = Omit<
-  State,
+  ApplicationStateReading,
   'settings' | 'target' | 'session'
 > & {
   settings: Settings<C, O>;
@@ -426,11 +403,7 @@ export type ApplicationSnapshot<C, O> = Omit<
 };
 
 /** A live state stream: the current state, then each later state. */
-export interface Observation<C, O> {
-  initial: ApplicationSnapshot<C, O>;
-  updates: AsyncIterable<ApplicationSnapshot<C, O>>;
-  close(): void;
-}
+export type Observation<C, O> = SnapshotStream<ApplicationSnapshot<C, O>>;
 
 /**
  * Commands resolve once the runtime has finished them; failures reject with an
@@ -454,10 +427,7 @@ export interface ApplicationClient<C, O> {
 }
 
 /** An open preview stream: events until closed or the portal goes away. */
-export interface PreviewStream {
-  events: AsyncIterable<PreviewEvent>;
-  close(): void;
-}
+export type PreviewStream = EventStream<PreviewEvent>;
 
 /**
  * The live preview. Each open stream counts as a viewer, and the session
@@ -469,10 +439,7 @@ export interface PreviewClient {
 }
 
 /** An open colors stream: events until closed or the portal goes away. */
-export interface ColorsStream {
-  events: AsyncIterable<ColorsEvent>;
-  close(): void;
-}
+export type ColorsStream = EventStream<ColorsEvent>;
 
 /**
  * The colours the lights show, a few per edge, without the picture: light

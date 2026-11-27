@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import type { WledSettings } from '@prysm/contracts/host-desktop';
 import {
+  Advanced,
   CheckboxField,
   DeviceRows,
   LedDrawing,
@@ -79,80 +80,76 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
       .map(({ edge }) => shownError(scope, `output.leds.${edge}`, true))
       .find(Boolean) ?? totalProblem;
   return (
-    <DeviceRows
-      section="output"
-      kind="wled"
-      path="output.address"
-      field="address"
-      legend="Lights"
-      things="lights"
-      nothing="No WLED lights found on this network. Enter their address."
-      value={address}
-      text={value.address}
-      typed={typedAddress}
-      onPick={(next, candidate) => {
-        setPicked(
-          candidate.led_count === undefined
-            ? undefined
-            : { address: next, leds: candidate.led_count },
-        );
-        onChange({ ...value, address: next });
-      }}
-      onType={(typed) => onChange({ ...value, address: typed })}
-      then={
-        <fieldset
-          className="leds"
-          aria-labelledby={legendId}
-          data-field="output.leds"
-          tabIndex={-1}
-        >
-          {/* Named by its label; the side it is seen from is an aside. */}
-          <legend>
-            <span id={legendId}>LEDs per edge</span>
-            <span>Seen from the front</span>
-          </legend>
-          <LedDrawing
-            edges={ledEdges(value.leds)}
-            caption={orderCaption(value.leds)}
-            editing={{
-              wiring,
-              invalid: !!totalProblem,
-              counts: {
-                top: edgeField('top'),
-                right: edgeField('right'),
-                bottom: edgeField('bottom'),
-                left: edgeField('left'),
-              },
-            }}
-          />
-          <div className="field-note" data-state={problem ? 'error' : 'help'}>
-            <p
-              className="help"
-              data-tone={
-                found !== undefined && found !== total ? 'warning' : undefined
-              }
-            >
-              {found === undefined ? null : `This WLED has ${found} LEDs.`}
-            </p>
-            <p className="field-error" data-field-message="output.leds">
-              {problem}
-            </p>
-          </div>
-        </fieldset>
-      }
-      advanced={{
-        paths: ['output.dither'],
-        fields: (
-          <CheckboxField
-            path="output.dither"
-            label="Smooth dark colours"
-            help="Mixes neighbouring LED levels so dim colours fade evenly. Turn off if dark scenes twinkle."
-            checked={value.dither ?? true}
-            onChange={(dither) => onChange({ ...value, dither })}
-          />
-        ),
-      }}
-    />
+    <>
+      <DeviceRows
+        section="output"
+        kind="wled"
+        field="address"
+        legend="Lights"
+        things="lights"
+        nothing="No WLED lights found on this network. Enter their address."
+        value={address}
+        text={value.address}
+        typed={typedAddress}
+        onPick={(next, candidate) => {
+          setPicked(
+            candidate.led_count === undefined
+              ? undefined
+              : { address: next, leds: candidate.led_count },
+          );
+          onChange({ ...value, address: next });
+        }}
+        onType={(typed) => onChange({ ...value, address: typed })}
+      />
+      <fieldset
+        className="leds"
+        aria-labelledby={legendId}
+        data-field="output.leds"
+        tabIndex={-1}
+      >
+        {/* Named by its label; the side it is seen from is an aside. */}
+        <legend>
+          <span id={legendId}>LEDs per edge</span>
+          <span>Seen from the front</span>
+        </legend>
+        <LedDrawing
+          edges={ledEdges(value.leds)}
+          caption={orderCaption(value.leds)}
+          editing={{
+            wiring,
+            invalid: !!totalProblem,
+            counts: {
+              top: edgeField('top'),
+              right: edgeField('right'),
+              bottom: edgeField('bottom'),
+              left: edgeField('left'),
+            },
+          }}
+        />
+        <div className="field-note" data-state={problem ? 'error' : 'help'}>
+          <p
+            className="help"
+            data-tone={
+              found !== undefined && found !== total ? 'warning' : undefined
+            }
+          >
+            {found === undefined ? null : `This WLED has ${found} LEDs.`}
+          </p>
+          <p className="field-error" data-field-message="output.leds">
+            {problem}
+          </p>
+        </div>
+      </fieldset>
+      <Advanced paths={['output.dither']}>
+        <CheckboxField
+          path="output.dither"
+          label="Smooth dark colours"
+          help="Mixes neighbouring LED levels so dim colours fade evenly. Turn off if dark scenes twinkle."
+          checked={value.dither ?? true}
+          onChange={(dither) => onChange({ ...value, dither })}
+        />
+      </Advanced>
+    </>
   );
 
   function edgeField(edge: keyof typeof edgeLabels) {

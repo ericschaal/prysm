@@ -2,15 +2,15 @@
 //! happening at a time, the effects, the next state and the failure shown.
 use super::*;
 use crate::machine::phase::{Phase, Sent, Then};
-use crate::machine::recovery::Restart;
-use Restart::{Available, Spent};
+use crate::machine::recovery::WorkerStage;
+use WorkerStage::{Restarting, Stable, Starting};
 use prysm_webos_link::Fix;
 
 /// A phase without its times or problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Is {
     Idle,
-    Running(Restart),
+    Running(WorkerStage),
     Stopping(Sent, Next),
     Asking,
     LetGo,
@@ -27,7 +27,7 @@ enum Next {
 fn is(phase: &Phase) -> Is {
     match phase {
         Phase::Idle => Is::Idle,
-        Phase::Running(run) => Is::Running(run.restart),
+        Phase::Running(run) => Is::Running(run.stage),
         Phase::Stopping(stopping) => Is::Stopping(
             stopping.sent,
             match stopping.then {
@@ -37,7 +37,7 @@ fn is(phase: &Phase) -> Is {
             },
         ),
         Phase::Asking(_) => Is::Asking,
-        Phase::LetGo(_) => Is::LetGo,
+        Phase::LetGo(..) => Is::LetGo,
     }
 }
 
@@ -69,7 +69,7 @@ enum Given {
 }
 
 fn start() -> Vec<Effect> {
-    vec![spawn_full(LightingTarget::Off), video(Video::Unknown)]
+    vec![spawn_full(), video(Video::Unknown)]
 }
 
 /// A report of `escalation`, for `message`.
@@ -108,8 +108,12 @@ impl Given {
         let kill = (8_500, Tick, vec![Effect::Kill]);
         match self {
             Self::Sleeping => vec![],
-            Self::Running => vec![power],
-            Self::Restarted => vec![power, (100, Exited(Exit::Signal(9)), start())],
+            Self::Running => vec![power, (0, initialized(), vec![])],
+            Self::Restarted => vec![
+                power,
+                (0, initialized(), vec![]),
+                (100, Exited(Exit::Signal(9)), start()),
+            ],
             Self::Said(escalation) => vec![power, (500, failed_with(escalation, "said"), vec![])],
             Self::StoppingAsked => vec![power, asleep],
             Self::StoppingToRestart => vec![power, fault],
@@ -150,24 +154,24 @@ fn running() -> Vec<Row> {
     let giving_up = Is::Stopping(Sent::Terminate, Next::Ask);
     let again = Some((TRY_AGAIN, "again after a restart: release unconfirmed"));
     vec![
-        (Running, 1_000, capturing(), vec![], Is::Running(Available), None),
+        (Running, 1_000, capturing(), vec![], Is::Running(Stable), None),
         (Running, 1_000, faulty(Escalation::Restart, "release unconfirmed"), term(), restarting, None),
         (
             Running, 1_000, faulty(Escalation::Ask(Fix::ChangeSettings), "bad"),
-            vec![], Is::Running(Available), Some((Asked::Ask(Fix::ChangeSettings), "bad")),
+            vec![], Is::Running(Stable), Some((Asked::Ask(Fix::ChangeSettings), "bad")),
         ),
         (
-            Running, 1_000, faulty(Escalation::Unanswered, "no answer"), vec![], Is::Running(Available),
+            Running, 1_000, faulty(Escalation::Unanswered, "no answer"), vec![], Is::Running(Stable),
             Some((Asked::Unanswered, "no answer")),
         ),
         (
             Running, 1_000, failed_with(Escalation::Ask(Fix::SetUp), "denied"), vec![],
-            Is::Running(Available), Some((Asked::Ask(Fix::SetUp), "denied")),
+            Is::Running(Stable), Some((Asked::Ask(Fix::SetUp), "denied")),
         ),
-        (Running, 1_000, failed_with(Escalation::Restart, "faulted"), vec![], Is::Running(Available), None),
-        (Running, 1_000, Exited(Exit::Code(0)), start(), Is::Running(Spent), None),
-        (Running, 1_000, Exited(Exit::Code(1)), start(), Is::Running(Spent), None),
-        (Running, 1_000, Exited(Exit::Signal(9)), start(), Is::Running(Spent), None),
+        (Running, 1_000, failed_with(Escalation::Restart, "faulted"), vec![], Is::Running(Stable), None),
+        (Running, 1_000, Exited(Exit::Code(0)), start(), Is::Running(Restarting), None),
+        (Running, 1_000, Exited(Exit::Code(1)), start(), Is::Running(Restarting), None),
+        (Running, 1_000, Exited(Exit::Signal(9)), start(), Is::Running(Restarting), None),
         (
             Running, 1_000, Input::WorkerBroken("y".into()), term(), giving_up,
             Some((TRY_AGAIN, "worker link broke: y")),
@@ -176,32 +180,30 @@ fn running() -> Vec<Row> {
             Running, 1_000, Input::SpawnFailed("s".into()), vec![], Is::Asking,
             Some((TRY_AGAIN, "cannot start the worker: s")),
         ),
-        (Running, 14_999, Tick, vec![], Is::Running(Available), None),
+        (Running, 14_999, Tick, vec![], Is::Running(Stable), None),
         (Running, 15_000, Tick, term(), restarting, None),
-        (Running, 1_000, Target(LightingTarget::Effects), vec![send_target(LightingTarget::Effects, 1)], Is::Running(Available), None),
+        (Running, 1_000, Target(LightingTarget::Effects), vec![send_target(LightingTarget::Effects, 1)], Is::Running(Stable), None),
         (
             Running, 1_000, Pw(Asleep), vec![video(Video::Unavailable), Effect::Terminate],
             Is::Stopping(Sent::Terminate, Next::Idle), None,
         ),
         (Running, 1_000, Input::Shutdown, term(), Is::Stopping(Sent::Terminate, Next::Idle), None),
-        // Why it said its run ends wins over how it ends.
         (Said(Escalation::Ask(Fix::SetUp)), 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, Some((Asked::Ask(Fix::SetUp), "said"))),
         (Said(Escalation::Ask(Fix::SetUp)), 15_500, Tick, term(), giving_up, Some((Asked::Ask(Fix::SetUp), "said"))),
-        (Said(Escalation::Restart), 1_000, Exited(Exit::Code(1)), start(), Is::Running(Spent), None),
-        // The restart is spent: the next fault before a frame asks.
+        (Said(Escalation::Restart), 1_000, Exited(Exit::Code(1)), start(), Is::Running(Restarting), None),
         (Restarted, 1_000, faulty(Escalation::Restart, "release unconfirmed"), term(), giving_up, again),
         (
             Restarted, 1_000, Exited(Exit::Signal(9)), vec![], Is::Asking,
-            Some((TRY_AGAIN, "again after a restart: worker killed by signal 9")),
+            Some((TRY_AGAIN, "worker killed by signal 9")),
         ),
         (
             Restarted, 15_100, Tick, term(), giving_up,
-            Some((TRY_AGAIN, "again after a restart: worker sent nothing for 15 s")),
+            Some((TRY_AGAIN, "worker sent nothing for 15 s")),
         ),
-        (Restarted, 1_000, status(LightingTarget::Off), vec![], Is::Running(Spent), None),
-        // A frame, or the person's choice, gives it back.
-        (Restarted, 1_000, capturing(), vec![], Is::Running(Available), None),
-        (Restarted, 1_000, Target(LightingTarget::Effects), vec![send_target(LightingTarget::Effects, 1)], Is::Running(Available), None),
+        (Restarted, 1_000, status(LightingTarget::Off), vec![], Is::Running(Restarting), None),
+        (Restarted, 1_000, capturing(), vec![], Is::Running(Restarting), None),
+        (Restarted, 1_000, initialized(), vec![], Is::Running(Stable), None),
+        (Restarted, 1_000, Target(LightingTarget::Effects), vec![send_target(LightingTarget::Effects, 1)], Is::Running(Starting), None),
     ]
 }
 
@@ -215,11 +217,9 @@ fn stopping_and_asking() -> Vec<Row> {
     let effects = || Target(LightingTarget::Effects);
     let asked = Is::Stopping(Terminate, Next::Idle);
     vec![
-        (Sleeping, 1_000, Pw(Active), start(), Is::Running(Available), None),
+        (Sleeping, 1_000, Pw(Active), start(), Is::Running(Starting), None),
         (Sleeping, 1_000, effects(), vec![], Is::Idle, None),
         (Sleeping, 1_000, Tick, vec![], Is::Idle, None),
-        // A stop asked for ends the run whatever it reports or how it ends;
-        // the next worker is a new process anyway.
         (StoppingAsked, 1_000, Exited(Exit::Code(0)), vec![], Is::Idle, None),
         (StoppingAsked, 1_000, Exited(Exit::Signal(9)), vec![], Is::Idle, None),
         (StoppingAsked, 1_000, faulty(Escalation::Restart, "release unconfirmed"), vec![], asked, None),
@@ -229,20 +229,17 @@ fn stopping_and_asking() -> Vec<Row> {
         (StoppingAsked, 8_500, Tick, vec![Effect::Kill], Is::Stopping(Kill, Next::Idle), None),
         (KilledAsked, 9_000, Exited(Exit::Signal(9)), vec![], Is::Idle, None),
         (KilledAsked, 16_500, Tick, vec![Effect::Abandon], Is::LetGo, abandoned),
-        // A stop for a restart: decided once, it restarts unless the person acts.
-        (StoppingToRestart, 1_000, Exited(Exit::Code(1)), start(), Is::Running(Spent), None),
+        (StoppingToRestart, 1_000, Exited(Exit::Code(1)), start(), Is::Running(Restarting), None),
         (StoppingToRestart, 1_000, failed_with(Escalation::Ask(Fix::SetUp), "denied"), vec![], Is::Stopping(Terminate, Next::Restart), None),
         (StoppingToRestart, 1_000, Input::WorkerBroken("y".into()), vec![], Is::Stopping(Terminate, Next::Restart), None),
         (StoppingToRestart, 8_500, Tick, vec![Effect::Kill], Is::Stopping(Kill, Next::Restart), None),
         (StoppingToRestart, 1_000, effects(), vec![], asked, None),
-        (KilledToRestart, 9_000, Exited(Exit::Signal(9)), start(), Is::Running(Spent), None),
+        (KilledToRestart, 9_000, Exited(Exit::Signal(9)), start(), Is::Running(Restarting), None),
         (KilledToRestart, 16_500, Tick, vec![Effect::Abandon], Is::LetGo, abandoned),
-        // A stop to ask: the problem is shown while it stops.
         (StoppingToAsk, 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, broken),
         (StoppingToAsk, 1_000, effects(), vec![], asked, None),
         (StoppingToAsk, 1_000, Pw(Asleep), vec![], asked, None),
-        // Asked: only the person's or the TV's action ends it.
-        (Asking, 1_000, effects(), vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)], Is::Running(Available), None),
+        (Asking, 1_000, effects(), vec![spawn_full(), send_target(LightingTarget::Effects, 1), video(Video::Unknown)], Is::Running(Starting), None),
         (Asking, 1_000, Pw(Asleep), vec![], Is::Idle, None),
         (Asking, 1_000, Pw(ScreenSaver), vec![], Is::Asking, broken),
         (Asking, 1_000, Input::Preferences(Preferences::default()), vec![], Is::Asking, broken),
@@ -252,8 +249,7 @@ fn stopping_and_asking() -> Vec<Row> {
         (Asking, 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, broken),
         (Asking, 1_000, Enabled(true), vec![], Is::Asking, broken),
         (Asking, 1_000, Input::LetGoReaped, vec![], Is::Asking, broken),
-        // Let go: only its end, its late reap, ends what is asked.
-        (LetGo, 17_000, Input::LetGoReaped, start(), Is::Running(Available), None),
+        (LetGo, 17_000, Input::LetGoReaped, start(), Is::Running(Restarting), None),
         (LetGo, 17_000, effects(), vec![], Is::LetGo, abandoned),
         (LetGo, 17_000, Pw(Asleep), vec![], Is::LetGo, abandoned),
         (LetGo, 17_000, Input::Preferences(Preferences::default()), vec![], Is::LetGo, abandoned),

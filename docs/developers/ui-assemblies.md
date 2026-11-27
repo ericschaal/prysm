@@ -78,14 +78,11 @@ and a summary of the setup with the LEDs per edge and the live preview in
 the TV's screen. Settings (`#/settings`)
 holds the live picture controls with calibrations, Calibrate colours, Run
 setup again, one Save form each for capture
-and output, the theme and the technical details. Both browser hosts
-pass `httpPreviewClient()` (same `baseUrl` option as the application client)
-as `WebPortal`'s optional `preview`. `httpColorsClient()` (a `ColorsClient`;
-`fakeColorsClient()` in the testkit) streams just the LED colors, up to 16 per
-edge, for Home's light and LED band. Both also pass `httpDiscoveryClient()` as the
-optional `discovery` (devices to pick) and `httpCaptureModesClient()` as the
-required `captureModes` (the sizes and rates a capture delivers, for its
-editor; `fakeCaptureModesClient()` in the testkit). A host registers each section's kinds as an `AdapterUis` map of
+and output, the theme and the technical details. Both browser hosts create one `httpPortalClient()` for the optional
+`preview`, `colors`, and `discovery` ports and the required `captureModes` port.
+Home uses up to 16 colors per edge for its light and LED band. The editors
+use discovery to find devices and capture modes to offer sizes and rates.
+Tests can supply each port independently. A host registers each section's kinds as an `AdapterUis` map of
 `AdapterUi { label, create, optional, Editor, normalize?, summary?, lighting?, edges? }`; the map is
 exhaustive over the host's generated union, the form shows the kinds as rows to tick when
 there is more than one, and editors are controlled components built from the
