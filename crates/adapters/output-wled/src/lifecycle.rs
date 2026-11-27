@@ -4,7 +4,6 @@ use crate::observe::Status;
 use prysm_ports::{
     Error, Escalation, OutputDisplay, OutputIssue, OutputObservation, Power, Readiness,
 };
-use serde_json::{Value, json};
 use std::net::IpAddr;
 
 /// A successfully decoded WLED state reply.
@@ -100,15 +99,11 @@ pub fn readiness_failure(error: Error) -> Readiness<Error> {
     }
 }
 
-/// Power WLED for Effects when needed, preserving its display settings.
-pub(crate) fn effects_power_command(status: WledObservation) -> Option<Value> {
-    (status.power == Power::Off).then(|| json!({"on": true, "tt": 0}))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use prysm_ports::{AdapterLifecycle, Availability, Fix};
+    use serde_json::json;
 
     const OURS: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 
@@ -158,11 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn release_requires_control_and_effects_power_leaves_settings_untouched() {
+    fn release_requires_control() {
         let ours = state(true, 0, "DDP", "127.0.0.1");
         let external = state(true, 0, "DDP", "127.0.0.2");
         let override_state = state(true, 2, "DDP", "127.0.0.1");
-        let off = state(false, 0, "", "");
         assert_eq!(ours.during_stream(Some(OURS)), StreamDisplay::Ours);
         assert_eq!(ours.during_stream(None), StreamDisplay::Unknown);
         assert_eq!(external.during_stream(Some(OURS)), StreamDisplay::Contended);
@@ -170,11 +164,6 @@ mod tests {
             override_state.during_stream(Some(OURS)),
             StreamDisplay::HandOff
         );
-        assert_eq!(
-            effects_power_command(off),
-            Some(json!({"on": true, "tt": 0}))
-        );
-        assert!(effects_power_command(override_state).is_none());
     }
 
     #[test]

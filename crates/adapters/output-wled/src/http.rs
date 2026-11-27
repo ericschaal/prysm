@@ -105,17 +105,54 @@ pub enum Malformed {
     ChunkSize,
 }
 
+/// The updates Prysm sends to WLED's `/json/state` endpoint.
+#[derive(serde::Serialize)]
+pub(crate) struct StateRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<bool>,
+    #[serde(rename = "lor", skip_serializing_if = "Option::is_none")]
+    live_override: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on: Option<bool>,
+    #[serde(rename = "tt", skip_serializing_if = "Option::is_none")]
+    transition_time: Option<u8>,
+}
+
+impl StateRequest {
+    pub(crate) const POWER_ON: Self = Self {
+        live: None,
+        live_override: None,
+        on: Some(true),
+        transition_time: Some(0),
+    };
+    pub(crate) const TAKE_OVER: Self = Self {
+        live_override: Some(0),
+        ..Self::POWER_ON
+    };
+    pub(crate) const END_LIVE: Self = Self {
+        live: Some(false),
+        live_override: None,
+        on: None,
+        transition_time: None,
+    };
+    pub(crate) const POWER_OFF: Self = Self {
+        on: Some(false),
+        transition_time: Some(0),
+        ..Self::END_LIVE
+    };
+}
+
 /// Send `state` to `device` by `deadline`, or until `stop` is cut, naming
 /// `host` (the configured `host[:port]`) in the `Host` header, and require
 /// WLED's `{"success":true}` reply.
 pub fn post_state(
     device: SocketAddr,
     host: &str,
-    state: &Value,
+    state: StateRequest,
     deadline: Deadline,
     stop: &Hangup,
 ) -> Result<(), RequestError> {
-    let body = state.to_string();
+    let body = serde_json::to_string(&state)?;
     let request = format!(
         "POST /json/state HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

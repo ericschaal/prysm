@@ -316,7 +316,7 @@ fn a_spent_deadline_sends_nothing() {
     let error = http::post_state(
         device.http(),
         "wled",
-        &json!({"on": true}),
+        http::StateRequest::POWER_ON,
         spent,
         &Hangup::default(),
     )
@@ -328,12 +328,12 @@ fn a_spent_deadline_sends_nothing() {
     http::post_state(
         device.http(),
         "wled",
-        &json!({"on": false}),
+        http::StateRequest::POWER_OFF,
         http::Deadline::after(WAIT),
         &Hangup::default(),
     )
     .unwrap();
-    assert_eq!(device.call(), json!({"on": false}));
+    assert_eq!(device.call(), off());
 }
 
 /// A power-off request is attempted once within its deadline.
@@ -1745,6 +1745,7 @@ fn production_resume_defers_to_override_and_explicit_open_clears_it() {
 fn production_effects_power_and_off_preserve_device_local_display_settings() {
     let device = Device::new(vec![
         Reply::Json(ON_IDLE),
+        Reply::Json(r#"{"state":{"on":true,"lor":2},"info":{"live":true,"lm":"DDP"}}"#),
         Reply::Json(OFF_IDLE),
         Reply::Json(OK),
         Reply::Json(OK),
@@ -1757,10 +1758,10 @@ fn production_effects_power_and_off_preserve_device_local_display_settings() {
         false,
     );
     let stop = Hangup::default();
-    device.wled.set_power(&settings, Power::On, &stop).unwrap();
-    device.check_request();
-    device.wled.set_power(&settings, Power::On, &stop).unwrap();
-    device.check_request();
+    for _ in 0..3 {
+        device.wled.set_power(&settings, Power::On, &stop).unwrap();
+        device.check_request();
+    }
     device.wled.set_power(&settings, Power::Off, &stop).unwrap();
     device.expect(&[
         json!({"on": true, "tt": 0}),

@@ -2,7 +2,7 @@ use crate::address::{Host, Names};
 use crate::classify::{self, Cause};
 use crate::ddp::{WledRenderer, route_address};
 use crate::dither::Encoding;
-use crate::http::{self, Deadline};
+use crate::http::{self, Deadline, StateRequest};
 use crate::lifecycle::{self, WledObservation};
 use crate::observe::{self, Observer};
 use crate::{LedCounts, WledSettings};
@@ -12,7 +12,6 @@ use prysm_ports::{
     OutputDisplay, OutputFactory, OutputObservationState, OutputOpen, OutputRelease, Power,
     Readiness, Result, ValidationError, system_lookup,
 };
-use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -180,7 +179,7 @@ impl OutputFactory for Wled {
             .device(settings, readiness.remaining(), stop)
             .map_err(OpenFailure::Untouched)?;
         let command = match intent {
-            OpenIntent::Explicit => json!({"on": true, "lor": 0, "tt": 0}),
+            OpenIntent::Explicit => StateRequest::TAKE_OVER,
             OpenIntent::Resume => {
                 let observed = device
                     .observe(readiness, stop)
@@ -189,11 +188,11 @@ impl OutputFactory for Wled {
                 if observed.display == OutputDisplay::Override {
                     return Ok(OutputOpen::Handoff(observed));
                 }
-                json!({"on": true, "tt": 0})
+                StateRequest::POWER_ON
             }
         };
         let renderer = Self::renderer(&device)?;
-        device.apply("live", &command, deadline, stop)?;
+        device.apply("live", command, deadline, stop)?;
         Ok(OutputOpen::Streaming(
             self.streaming(settings, device, renderer),
         ))
@@ -207,23 +206,19 @@ impl OutputFactory for Wled {
         let deadline = Deadline::after(timeout);
         let device = self.device(settings, deadline.remaining(), stop)?;
         let (command, mode) = match power {
-            Power::Off => (power_off_command(), "off"),
+            Power::Off => (StateRequest::POWER_OFF, "off"),
             Power::On => {
                 let status = device.observe(deadline.earlier(IDLE_LIMIT), stop)?;
-                let Some(command) = lifecycle::effects_power_command(status) else {
+                if status.power == Power::On {
                     return Ok(());
-                };
-                (command, "native")
+                }
+                (StateRequest::POWER_ON, "native")
             }
         };
         device
-            .apply(mode, &command, deadline, stop)
+            .apply(mode, command, deadline, stop)
             .map_err(OpenFailure::into_error)
     }
-}
-
-fn power_off_command() -> Value {
-    json!({"on": false, "live": false, "tt": 0})
 }
 
 /// `error` of a request under `context`, escalating by its row.
@@ -248,7 +243,7 @@ impl Device {
     fn apply(
         &self,
         mode: &str,
-        state: &Value,
+        state: StateRequest,
         deadline: Deadline,
         stop: &Hangup,
     ) -> Result<(), OpenFailure> {
@@ -312,9 +307,13 @@ impl LedOutput for WledOutput {
             device, renderer, ..
         } = *self;
         drop(renderer);
-        if release == OutputRelease::Local {
-            return Ok(());
-        }
+        let (command, mode) = match release {
+            OutputRelease::Ordinary(IdleMode::Off) => (StateRequest::POWER_OFF, "off"),
+            OutputRelease::Ordinary(IdleMode::Native) | OutputRelease::Handoff => {
+                (StateRequest::END_LIVE, "native")
+            }
+            OutputRelease::Local => return Ok(()),
+        };
         let deadline = Deadline::after(IDLE_LIMIT);
         let status = device.observe(deadline.earlier(IDLE_LIMIT / 2), stop);
         let own_sender = own_sender.filter(|sender| route_address(device.ddp) == Some(*sender));
@@ -323,15 +322,8 @@ impl LedOutput for WledOutput {
         {
             return Ok(());
         }
-        let (command, mode) = match release {
-            OutputRelease::Ordinary(IdleMode::Off) => (power_off_command(), "off"),
-            OutputRelease::Ordinary(IdleMode::Native) | OutputRelease::Handoff => {
-                (json!({"live": false}), "native")
-            }
-            OutputRelease::Local => return Ok(()),
-        };
         device
-            .apply(mode, &command, deadline, stop)
+            .apply(mode, command, deadline, stop)
             .map_err(OpenFailure::into_error)
     }
 
