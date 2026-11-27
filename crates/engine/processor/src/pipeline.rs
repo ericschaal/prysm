@@ -364,7 +364,7 @@ mod tests {
                 ..Config::default()
             },
             Config {
-                correction: ColorCorrection::new(0, 0, 10).unwrap(),
+                correction: ColorCorrection::new(0, 0, 10, Default::default()).unwrap(),
                 ..Config::default()
             },
         ] {

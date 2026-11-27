@@ -3,15 +3,6 @@ use crate::LinearColor;
 /// The identity matrix: every picture primary drives only its own LED channel.
 const IDENTITY: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
-// How far each primary's controls mix other LED channels into it, at ±100.
-// The mix grows with the square of the control, so the first steps near 0
-// are fine (10 mixes 1 % of the maximum) while the ends leave room beyond
-// the few tenths of a neighbouring channel that matching an LED strip's
-// purer primaries to the picture's is expected to take (not yet measured).
-// Before rows are normalised a full turn or calm mixes 0.5, which leaves an
-// off-diagonal term of 1/3 (1/2 for both together). Strengthening subtracts
-// and is clipped at the gamut, so it is kept smaller: at 0.25 each row's sum
-// stays at least 0.5, well away from zero, whatever the controls are.
 const MAX_TURN: f32 = 0.5;
 const MAX_CALM: f32 = 0.5;
 const MAX_STRENGTHEN: f32 = 0.25;
@@ -58,8 +49,6 @@ fn curve(control: i16) -> f32 {
 /// peak, then one 3x3 matrix from picture to LED channels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorCorrection {
-    /// White balance, kept to rebuild the matrix with other primaries.
-    gains: [f32; 3],
     tone: f32,
     /// `LED = matrix · picture`: the white-balance gains (a diagonal) times
     /// the primaries' matrix, whose rows each sum to 1.
@@ -69,21 +58,20 @@ pub struct ColorCorrection {
 impl Default for ColorCorrection {
     fn default() -> Self {
         Self {
-            gains: [1.0; 3],
             tone: 1.0,
             matrix: IDENTITY,
         }
     }
 }
 
-/// The white-balance gains applied after the primaries: `diag(gains) · primaries`.
-fn balanced(gains: [f32; 3], mut primaries: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
-    for (row, gain) in primaries.iter_mut().zip(gains) {
-        for value in row {
-            *value *= gain;
-        }
-    }
-    primaries
+fn white_balance(warmth: i16, tint: i16) -> [f32; 3] {
+    let gains = [
+        (f32::from(warmth) / 200.0).exp2(),
+        (-f32::from(tint) / 200.0).exp2(),
+        (-f32::from(warmth) / 200.0).exp2(),
+    ];
+    let maximum = gains.iter().copied().fold(1.0_f32, f32::max);
+    gains.map(|gain| gain / maximum)
 }
 
 fn in_range(controls: &[i16]) -> Result<(), &'static str> {
@@ -95,58 +83,35 @@ fn in_range(controls: &[i16]) -> Result<(), &'static str> {
 }
 
 impl ColorCorrection {
-    /// Controls span -100 to 100; zero is identity. Positive values warm, add
-    /// magenta, and lighten midtones respectively. Gains only attenuate.
-    /// The primaries are left as they are.
+    /// Builds the transform from warmth, tint, midtones and the red, green and blue
+    /// primary adjustments. Zero controls give the identity transform.
     ///
     /// # Errors
-    /// Rejects controls outside -100..=100.
-    pub fn new(warmth: i16, tint: i16, midtones: i16) -> Result<Self, &'static str> {
+    /// Rejects any control outside -100..=100.
+    pub fn new(
+        warmth: i16,
+        tint: i16,
+        midtones: i16,
+        primaries: [PrimaryAdjustment; 3],
+    ) -> Result<Self, &'static str> {
         in_range(&[warmth, tint, midtones])?;
-        let mut gains = [
-            (f32::from(warmth) / 200.0).exp2(),
-            (-f32::from(tint) / 200.0).exp2(),
-            (-f32::from(warmth) / 200.0).exp2(),
-        ];
-        let maximum = gains.iter().copied().fold(1.0_f32, f32::max);
-        for gain in &mut gains {
-            *gain /= maximum;
-        }
-        Ok(Self {
-            gains,
-            tone: (-f32::from(midtones) / 100.0).exp2(),
-            matrix: balanced(gains, IDENTITY),
-        })
-    }
-
-    /// Adjust the red, green and blue primaries. Each row of the primaries'
-    /// matrix is scaled to sum to 1, so white and greys stay exactly as the
-    /// white balance leaves them: adjusting a primary never moves white.
-    ///
-    /// # Errors
-    /// Rejects controls outside -100..=100.
-    pub fn with_primaries(self, primaries: [PrimaryAdjustment; 3]) -> Result<Self, &'static str> {
         in_range(&primaries.map(|p| p.hue))?;
         in_range(&primaries.map(|p| p.strength))?;
-        // Column p is what picture primary p lights: its own channel plus
-        // the mixes its controls add.
         let mut matrix = IDENTITY;
         for (column, primary) in primaries.iter().enumerate() {
             for (row, mix) in primary.mixes(column).into_iter().enumerate() {
                 matrix[row][column] += mix;
             }
         }
-        for row in &mut matrix {
-            // At least 1 - 2 * MAX_STRENGTHEN: never zero. Exactly 1 for a
-            // row no control touches, so all zero stays the identity.
+        for (row, gain) in matrix.iter_mut().zip(white_balance(warmth, tint)) {
             let sum: f32 = row.iter().sum();
-            for value in row {
-                *value /= sum;
+            for coefficient in row {
+                *coefficient = (*coefficient / sum) * gain;
             }
         }
         Ok(Self {
-            matrix: balanced(self.gains, matrix),
-            ..self
+            tone: (-f32::from(midtones) / 100.0).exp2(),
+            matrix,
         })
     }
 
@@ -203,9 +168,7 @@ mod tests {
     fn primary(index: usize, hue: i16, strength: i16) -> ColorCorrection {
         let mut primaries = [PrimaryAdjustment::default(); 3];
         primaries[index] = PrimaryAdjustment { hue, strength };
-        ColorCorrection::default()
-            .with_primaries(primaries)
-            .unwrap()
+        ColorCorrection::new(0, 0, 0, primaries).unwrap()
     }
 
     fn channels(color: LinearColor) -> [f32; 3] {
@@ -238,22 +201,18 @@ mod tests {
 
     #[test]
     fn zero_primaries_are_bit_exact_identity() {
-        let zero = ColorCorrection::new(0, 0, 0)
-            .unwrap()
-            .with_primaries([PrimaryAdjustment::default(); 3])
-            .unwrap();
+        let zero = ColorCorrection::new(0, 0, 0, Default::default()).unwrap();
         assert_eq!(zero, ColorCorrection::default());
-        let warm = ColorCorrection::new(40, -20, 0).unwrap();
-        let same = warm
-            .with_primaries([PrimaryAdjustment::default(); 3])
-            .unwrap();
-        assert_eq!(same, warm);
+        let warm = ColorCorrection::new(40, -20, 0, Default::default()).unwrap();
         for step in 0..=100_u8 {
             let x = f32::from(step) / 100.0;
             let input = LinearColor::new(x, x * 0.3, 1.0 - x);
             assert_eq!(zero.apply(input), input);
-            let [r, g, b] = warm.gains;
-            let want = [input.r * r, input.g * g, input.b * b];
+            let want = [
+                input.r,
+                input.g * (-0.1_f32).exp2(),
+                input.b * (-0.4_f32).exp2(),
+            ];
             for (got, want) in channels(warm.apply(input)).into_iter().zip(want) {
                 assert!((got - want).abs() < 1e-6);
             }
@@ -262,9 +221,9 @@ mod tests {
 
     #[test]
     fn white_and_greys_stay_as_the_white_balance_leaves_them() {
-        let balance = ColorCorrection::new(30, -15, 0).unwrap();
+        let balance = ColorCorrection::new(30, -15, 0, Default::default()).unwrap();
         for primaries in every_primaries() {
-            let corrected = balance.with_primaries(primaries).unwrap();
+            let corrected = ColorCorrection::new(30, -15, 0, primaries).unwrap();
             for gray in [0.0, 0.05, 0.3, 0.75, 1.0] {
                 let input = LinearColor::new(gray, gray, gray);
                 let (got, want) = (corrected.apply(input), balance.apply(input));
@@ -325,9 +284,11 @@ mod tests {
 
     #[test]
     fn the_matrix_is_linear_before_clipping() {
-        let corrected = ColorCorrection::new(20, 10, 0)
-            .unwrap()
-            .with_primaries([
+        let corrected = ColorCorrection::new(
+            20,
+            10,
+            0,
+            [
                 PrimaryAdjustment {
                     hue: 40,
                     strength: -30,
@@ -340,8 +301,9 @@ mod tests {
                     hue: 70,
                     strength: 0,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let red = LinearColor::new(0.5, 0.0, 0.0);
         let green = LinearColor::new(0.0, 0.4, 0.0);
         let blue = LinearColor::new(0.0, 0.0, 0.3);
@@ -358,10 +320,7 @@ mod tests {
     fn output_stays_within_the_lights_range() {
         for primaries in every_primaries() {
             for midtones in [-100, 0, 100] {
-                let corrected = ColorCorrection::new(-80, 60, midtones)
-                    .unwrap()
-                    .with_primaries(primaries)
-                    .unwrap();
+                let corrected = ColorCorrection::new(-80, 60, midtones, primaries).unwrap();
                 for r in 0..=4_u8 {
                     for g in 0..=4_u8 {
                         for b in 0..=4_u8 {
@@ -378,11 +337,10 @@ mod tests {
 
     #[test]
     fn controls_outside_their_range_are_refused() {
-        let base = ColorCorrection::default();
         let one = |hue, strength| {
             let mut primaries = [PrimaryAdjustment::default(); 3];
             primaries[2] = PrimaryAdjustment { hue, strength };
-            base.with_primaries(primaries)
+            ColorCorrection::new(0, 0, 0, primaries)
         };
         assert!(one(100, -100).is_ok());
         assert!(one(101, 0).is_err());
@@ -395,11 +353,12 @@ mod tests {
         for warmth in [-100, 0, 100] {
             for tint in [-100, 0, 100] {
                 for midtones in [-100, 0, 100] {
-                    let correction = ColorCorrection::new(warmth, tint, midtones).unwrap();
+                    let correction =
+                        ColorCorrection::new(warmth, tint, midtones, Default::default()).unwrap();
                     assert_eq!(correction.apply(LinearColor::black()), LinearColor::black());
                     assert_eq!(
                         correction.apply(LinearColor::new(1.0, 1.0, 1.0)),
-                        ColorCorrection::new(warmth, tint, 0)
+                        ColorCorrection::new(warmth, tint, 0, Default::default())
                             .unwrap()
                             .apply(LinearColor::new(1.0, 1.0, 1.0))
                     );
@@ -427,8 +386,8 @@ mod tests {
                 }
             }
         }
-        assert!(ColorCorrection::new(101, 0, 0).is_err());
-        assert!(ColorCorrection::new(0, -101, 0).is_err());
-        assert!(ColorCorrection::new(0, 0, i16::MAX).is_err());
+        assert!(ColorCorrection::new(101, 0, 0, Default::default()).is_err());
+        assert!(ColorCorrection::new(0, -101, 0, Default::default()).is_err());
+        assert!(ColorCorrection::new(0, 0, i16::MAX, Default::default()).is_err());
     }
 }

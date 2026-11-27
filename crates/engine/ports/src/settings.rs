@@ -509,18 +509,20 @@ mod tests {
         }))
         .unwrap();
         processing.validate().unwrap();
-        let expected = ColorCorrection::new(40, 0, 0)
-            .and_then(|c| {
-                c.with_primaries([
-                    PrimaryAdjustment {
-                        hue: -5,
-                        strength: 0,
-                    },
-                    PrimaryAdjustment::default(),
-                    PrimaryAdjustment::default(),
-                ])
-            })
-            .unwrap();
+        let expected = ColorCorrection::new(
+            40,
+            0,
+            0,
+            [
+                PrimaryAdjustment {
+                    hue: -5,
+                    strength: 0,
+                },
+                PrimaryAdjustment::default(),
+                PrimaryAdjustment::default(),
+            ],
+        )
+        .unwrap();
         assert_eq!(processing.config().correction, expected);
         assert_eq!(
             Processing {

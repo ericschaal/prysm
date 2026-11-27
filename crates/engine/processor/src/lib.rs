@@ -157,7 +157,8 @@ mod correction_tests {
         let frame = Frame::fill(128, 4, 2, PixelFormat::RGB24).unwrap();
         let mut processor = PrysmProcessor::new(&config);
         let original = processor.process_frame(frame.clone()).top.sample_at(0.5);
-        config.correction = prysm_core::ColorCorrection::new(60, -30, 40).unwrap();
+        config.correction =
+            prysm_core::ColorCorrection::new(60, -30, 40, Default::default()).unwrap();
         processor.configure(&config);
         let corrected = processor.process_frame(frame.clone()).top.sample_at(0.5);
         let expected = config.correction.apply(original / 0.7) * 0.7;
@@ -190,7 +191,7 @@ mod correction_tests {
         for channel in [neutral.r, neutral.g, neutral.b] {
             assert!((channel - 0.05).abs() < 1e-6, "{neutral:?}");
         }
-        let warm = ColorCorrection::new(60, -30, 40).unwrap();
+        let warm = ColorCorrection::new(60, -30, 40, Default::default()).unwrap();
         let corrected = glow(warm);
         let expected = warm.apply(LinearColor::new(0.1, 0.1, 0.1)) * 0.5;
         for (actual, expected) in [

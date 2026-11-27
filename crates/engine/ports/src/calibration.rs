@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn a_pattern_shows_without_smoothing_boost_or_glow_and_optionally_without_correction() {
         let configured = Config {
-            correction: ColorCorrection::new(40, 0, 0).unwrap(),
+            correction: ColorCorrection::new(40, 0, 0, Default::default()).unwrap(),
             brightness_percent: BrightnessPercent(55),
             smoothing_seconds: SmoothingSeconds(2.5),
             saturation_boost_percent: SaturationBoostPercent(30),

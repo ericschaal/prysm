@@ -288,7 +288,8 @@ fn main() -> io::Result<()> {
     let base = Config {
         saturation_boost_percent: SaturationBoostPercent(20),
         dark_floor_percent: DarkFloorPercent(2),
-        correction: ColorCorrection::new(10, -5, 5).expect("a valid correction"),
+        correction: ColorCorrection::new(10, -5, 5, Default::default())
+            .expect("a valid correction"),
         brightness_percent: BrightnessPercent(90),
         sample_density: options.density,
         ..Config::default()
