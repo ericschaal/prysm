@@ -59,9 +59,7 @@ fn check_format(file: &Value) -> std::result::Result<(), FormatError> {
     let Some(object) = file.as_object() else {
         return Ok(());
     };
-    let Some(format) = object.get(FORMAT_FIELD) else {
-        return Err(FormatError::Missing);
-    };
+    let format = object.get(FORMAT_FIELD).ok_or(FormatError::Missing)?;
     let not_a_number = || FormatError::NotANumber {
         found: format.to_string(),
     };
@@ -101,9 +99,7 @@ struct Saved<'a> {
     settings: &'a Settings,
 }
 
-/// The settings of a file whose header was checked. Serde's `flatten` would
-/// let unknown fields through, so the file's object is read as the settings
-/// with its `format` skipped; errors keep their line.
+/// Reads settings after the format check, preserving source positions for field errors.
 fn settings(bytes: &[u8]) -> serde_json::Result<Settings> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let settings = deserializer.deserialize_map(SettingsObject)?;

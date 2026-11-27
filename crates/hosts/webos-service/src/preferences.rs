@@ -230,15 +230,13 @@ fn replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
 impl PreferencesStore for FileStore {
     fn load(&mut self) -> Result<Option<PreferencesFile>, StoreError> {
         let path = &self.path;
-        let Some(bytes) = read_private(path, MAX_BYTES).map_err(|source| StoreError::Read {
-            path: path.clone(),
-            source,
-        })?
-        else {
-            return Ok(None);
-        };
-        serde_json::from_slice(&bytes)
-            .map(Some)
+        read_private(path, MAX_BYTES)
+            .map_err(|source| StoreError::Read {
+                path: path.clone(),
+                source,
+            })?
+            .map(|bytes| serde_json::from_slice(&bytes))
+            .transpose()
             .map_err(|source| StoreError::Invalid {
                 path: path.clone(),
                 source,

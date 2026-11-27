@@ -138,6 +138,23 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
     }
 }
 
+#[test]
+fn a_duplicate_section_reports_the_second_key() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(
+        &path,
+        "{\n\"format\":1,\n\"processing\":{},\n\"processing\":{}}",
+    )
+    .unwrap();
+    let error = SettingsFile::new(path).load().unwrap_err();
+    let json = error.cause::<serde_json::Error>().unwrap();
+    assert_eq!(
+        json.to_string(),
+        "duplicate field `processing` at line 4 column 12"
+    );
+}
+
 /// A section is an object: an array is not read as its defaults, by position.
 #[test]
 fn a_section_written_as_an_array_is_refused() {
