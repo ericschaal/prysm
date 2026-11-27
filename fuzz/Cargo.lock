@@ -418,6 +418,7 @@ dependencies = [
  "cc",
  "libc",
  "libloading",
+ "prysm-webos-library-sys",
  "prysm-webos-luna-sys",
  "strum",
  "thiserror",
@@ -472,11 +473,20 @@ name = "prysm-version"
 version = "0.0.0"
 
 [[package]]
-name = "prysm-webos-luna-sys"
+name = "prysm-webos-library-sys"
 version = "0.0.0"
 dependencies = [
  "libloading",
  "once_cell",
+ "thiserror",
+]
+
+[[package]]
+name = "prysm-webos-luna-sys"
+version = "0.0.0"
+dependencies = [
+ "libloading",
+ "prysm-webos-library-sys",
  "thiserror",
 ]
 

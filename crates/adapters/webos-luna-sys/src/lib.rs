@@ -13,10 +13,6 @@
 //! crate builds anywhere. Off a webOS TV [`run`] refuses with
 //! [`Error::Unsupported`] before touching any library.
 //!
-//! - [`VendorLibrary`]: load a vendor library and its entry points once per
-//!   process, never to unload them; LS2 and GLib here, VTCapture and HAL GAL
-//!   in `prysm-capture-webos-sys`.
-//!
 //! Safety contract kept by this crate, never by its callers: callback state
 //! lives in one shared allocation registered with LS2 and freed only after
 //! `LSUnregister`; callbacks run only on the thread inside [`run`]; a panic in
@@ -24,11 +20,10 @@
 //! instead of unwinding into C or freeing memory LS2 may still use. No
 //! library is ever unloaded.
 mod check;
-mod library;
 mod service;
 
 pub use check::check_registration;
-pub use library::VendorLibrary;
+use prysm_webos_library_sys::VendorLibrary;
 pub use service::{
     Bus, Config, Handler, MAX_PAYLOAD, Next, Refusal, Request, Response, Wake, Waker, run,
 };
@@ -117,6 +112,7 @@ fn luna() -> Result<&'static generated::luna::Luna, Error> {
         // SAFETY: the pinned LS2 library matches the generated SDK signatures.
         unsafe { generated::luna::Luna::new(LUNA_LIBRARY) }
     })
+    .map_err(Error::from)
 }
 
 /// GLib's entry points, loaded on first use for the life of the process.
@@ -128,18 +124,15 @@ fn glib() -> Result<&'static generated::glib::Glib, Error> {
         // SAFETY: the pinned GLib library matches the generated SDK signatures.
         unsafe { generated::glib::Glib::new(GLIB_LIBRARY) }
     })
+    .map_err(Error::from)
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
     Unsupported(&'static str),
-    #[error("cannot load {library}")]
-    Load {
-        library: String,
-        #[source]
-        source: libloading::Error,
-    },
+    #[error(transparent)]
+    Load(#[from] prysm_webos_library_sys::LoadError),
     /// LS2 refused to register `name`: the caller's role does not allow it.
     #[error("Luna denied the registration of {name}: {message}")]
     Denied { name: String, message: String },

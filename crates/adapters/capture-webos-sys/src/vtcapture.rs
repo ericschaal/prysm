@@ -40,12 +40,8 @@ pub enum Acquired<'a> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("cannot load {library}")]
-    Load {
-        library: String,
-        #[source]
-        source: libloading::Error,
-    },
+    #[error(transparent)]
+    Load(#[from] prysm_webos_library_sys::LoadError),
     /// The process's role does not allow the capture client names.
     #[error("the capture registration is not allowed")]
     Permission(#[source] prysm_webos_luna_sys::Error),
@@ -88,7 +84,7 @@ impl From<prysm_webos_luna_sys::Error> for Error {
     fn from(error: prysm_webos_luna_sys::Error) -> Self {
         use prysm_webos_luna_sys::Error as Luna;
         match error {
-            Luna::Load { library, source } => Self::Load { library, source },
+            Luna::Load(error) => Self::Load(error),
             denied @ Luna::Denied { .. } => Self::Permission(denied),
             unremoved @ Luna::Unremoved { .. } => Self::Registered(unremoved),
             other => Self::Luna(other),
@@ -1034,6 +1030,6 @@ mod tests {
         let Err(error) = VtCapture::open(&options) else {
             panic!("no LG library on the development host");
         };
-        assert!(matches!(error, Error::Load { .. }), "{error}");
+        assert!(matches!(error, Error::Load(_)), "{error}");
     }
 }

@@ -1,7 +1,14 @@
 //! Process-lifetime storage for vendor libraries and their resolved entry points.
-use crate::Error;
 use libloading::Library;
 use once_cell::sync::OnceCell;
+
+#[derive(Debug, thiserror::Error)]
+#[error("cannot load {library}")]
+pub struct LoadError {
+    library: String,
+    #[source]
+    source: libloading::Error,
+}
 
 /// Loads the first available library and retains it even if resolving symbols fails.
 pub struct VendorLibrary<A> {
@@ -28,13 +35,13 @@ impl<A> VendorLibrary<A> {
     pub fn load(
         &'static self,
         symbols: impl FnOnce(&'static Library) -> Result<A, libloading::Error>,
-    ) -> Result<&'static A, Error> {
+    ) -> Result<&'static A, LoadError> {
         self.api
             .get_or_try_init(|| {
                 let library = self.handle.get_or_try_init(|| self.open())?;
                 symbols(library)
             })
-            .map_err(|source| Error::Load {
+            .map_err(|source| LoadError {
                 library: self.names.join(" or "),
                 source,
             })
@@ -128,7 +135,7 @@ mod tests {
             unsafe { VendorLibrary::new(&["/nonexistent/libprysm-test.so"]) };
         for _ in 0..2 {
             let error = SLOT.load(|_| Ok(1)).unwrap_err();
-            assert!(matches!(error, Error::Load { .. }), "{error}");
+            assert_eq!(error.library, "/nonexistent/libprysm-test.so");
             assert!(SLOT.handle.get().is_none());
         }
     }

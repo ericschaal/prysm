@@ -1056,7 +1056,7 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
         return; // On a TV this would open real hardware; not a host test.
     }
     let load = sys::UiCapture::open(320, 180).err().unwrap();
-    assert!(matches!(load, sys::Error::Load { .. }), "{load}");
+    assert!(matches!(load, sys::Error::Load(_)), "{load}");
     assert!(fatal(backend::ui_open_fault(load)));
 }
 

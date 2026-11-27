@@ -64,7 +64,7 @@ pub(crate) enum VideoCause<'a> {
 pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
     use sys::{Error as E, Operation as O};
     match cause {
-        VideoCause::Native(E::Load { .. }) => Recovery::Escalate(Escalation::Ask(Fix::Unsupported)),
+        VideoCause::Native(E::Load(_)) => Recovery::Escalate(Escalation::Ask(Fix::Unsupported)),
         VideoCause::Native(E::Permission(_)) => Recovery::Escalate(Escalation::Ask(Fix::SetUp)),
         VideoCause::Native(E::Create(_) | E::Registered(_)) => {
             Recovery::Escalate(Escalation::Restart)
@@ -115,7 +115,7 @@ pub(crate) enum UiCause<'a> {
 pub(crate) fn ui(cause: UiCause<'_>) -> UiRecovery {
     use sys::Error as E;
     match cause {
-        UiCause::Open(E::Load { .. }) | UiCause::SignalMask => UiRecovery::Unsupported,
+        UiCause::Open(E::Load(_)) | UiCause::SignalMask => UiRecovery::Unsupported,
         UiCause::Open(E::Device { source, .. })
             if source.kind() == std::io::ErrorKind::NotFound =>
         {

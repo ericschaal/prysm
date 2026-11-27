@@ -22,7 +22,7 @@
 //! ```
 //!
 //! The libraries are loaded once per process (with
-//! `prysm_webos_luna_sys::VendorLibrary`), on the thread of the first tap; later
+//! `prysm_webos_library_sys::VendorLibrary`), on the thread of the first tap; later
 //! taps may be opened on other threads. Each call is a single native
 //! operation; watchdogs, retries, pacing, tap selection and pixel conversion
 //! belong to the caller (`prysm-capture-webos`). After a failed driver call a
@@ -43,7 +43,7 @@ macro_rules! native_api {
 
         impl $name {
             fn load() -> Result<&'static Self, $crate::Error> {
-                use prysm_webos_luna_sys::VendorLibrary;
+                use prysm_webos_library_sys::VendorLibrary;
                 // SAFETY: these names identify the capture adapter's native TV library.
                 static LIBRARY: VendorLibrary<$name> = unsafe { VendorLibrary::new(&$names) };
                 Ok(LIBRARY.load(|library| {

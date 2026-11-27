@@ -19,6 +19,7 @@ members = [
     "crates/adapters/h264-rvenc-sys",
     "crates/adapters/output-wled",
     "crates/adapters/settings-file",
+    "crates/adapters/webos-library-sys",
     "crates/adapters/webos-luna-sys",
     "crates/surfaces/tui",
     "crates/surfaces/web-portal",
@@ -62,6 +63,7 @@ prysm-capture-file = { path = "crates/adapters/capture-file" }
 prysm-capture-remote = { path = "crates/adapters/capture-remote" }
 prysm-capture-webos = { path = "crates/adapters/capture-webos" }
 prysm-h264 = { path = "crates/adapters/h264" }
+prysm-webos-library-sys = { path = "crates/adapters/webos-library-sys" }
 prysm-webos-luna-sys = { path = "crates/adapters/webos-luna-sys" }
 prysm-output-wled = { path = "crates/adapters/output-wled" }
 prysm-settings-file = { path = "crates/adapters/settings-file" }

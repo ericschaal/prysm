@@ -540,6 +540,6 @@ mod tests {
             return; // On a TV this would open real hardware; not a host test.
         }
         let error = UiCapture::open(320, 180).err().unwrap();
-        assert!(matches!(error, Error::Load { .. }), "{error}");
+        assert!(matches!(error, Error::Load(_)), "{error}");
     }
 }

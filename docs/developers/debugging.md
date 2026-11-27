@@ -95,7 +95,7 @@ ones:
 ```sh
 RUSTFLAGS=-Zsanitizer=address cargo +nightly-2026-11-01 test -Zbuild-std \
   --target x86_64-unknown-linux-gnu --lib --tests \
-  -p prysm-capture-webos-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
+  -p prysm-capture-webos-sys -p prysm-webos-library-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
 ```
 
 `-Zsanitizer=thread` for ThreadSanitizer. Code built by `cc` (the C++

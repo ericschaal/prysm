@@ -8,13 +8,12 @@ description = "LG webOS Luna service bus (LS2) and GLib main loop FFI behind a s
 
 [dependencies]
 libloading.workspace = true
-once_cell.workspace = true
+prysm-webos-library-sys.workspace = true
 thiserror.workspace = true
 # Only for the binding generator (`--features codegen`); needs libclang.
 bindgen = { version = "0.73.2", default-features = false, features = ["runtime"], optional = true }
 clap = { workspace = true, optional = true }
 
-# One of the four crates allowed to use `unsafe` (with capture-device-sys, capture-webos-sys and h264-rvenc-sys). Every block carries a SAFETY note.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

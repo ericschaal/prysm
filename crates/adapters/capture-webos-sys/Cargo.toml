@@ -11,6 +11,7 @@ libloading.workspace = true
 libc = "0.2"
 strum.workspace = true
 thiserror.workspace = true
+prysm-webos-library-sys.workspace = true
 # The one Luna binding: the registration precheck.
 prysm-webos-luna-sys.workspace = true
 
@@ -24,7 +25,6 @@ fuzzing = []
 [build-dependencies]
 cc = "1"
 
-# One of the four crates allowed to use `unsafe` (with capture-device-sys, webos-luna-sys and h264-rvenc-sys). Every block carries a SAFETY note.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
