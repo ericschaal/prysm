@@ -966,6 +966,25 @@ def planned_commands(values: config.Config) -> Iterator[commands.Command]:
 
 
 class TheCells(unittest.TestCase):
+    def test_delayed_ddp_after_confirmed_off_fails_the_startup_check(self) -> None:
+        portal = mock.Mock(spec=prysm_api.Prysm)
+        off = {
+            'target': 'off',
+            'session': {'state': 'stopped'},
+            'control': {'power': 'off', 'remembered': 'screen_sync', 'busy': False, 'external': False},
+        }
+        portal.wait.return_value = portal.state.return_value = off
+        lights = mock.Mock()
+        lights.si.side_effect = [
+            {'state': {'on': False}, 'info': {'live': False}},
+            {'state': {'on': False}, 'info': {'live': True}},
+        ]
+        evidence: dict[str, object] = {}
+        with mock.patch.object(tv_checks.time, 'sleep'), self.assertRaisesRegex(Failed, 'no live output'):
+            tv_checks.check_startup_off(portal, lights, evidence)
+        self.assertEqual(evidence['portal_after'], off)
+        self.assertEqual(evidence['wled_after'], {'state': {'on': False}, 'info': {'live': True}})
+
     def test_the_checks_any_tv_runs_know_no_webos(self) -> None:
         """The seam: the shared checks and the TV they drive (`tv.Tv`) import nothing of `webos` and nothing of
         the command templates but the `Command` type (`tv.py` only), and name nothing of Luna, the package or
@@ -1079,6 +1098,17 @@ class TheCommandLine(unittest.TestCase):
                     )
                 ]
                 self.assertEqual(order, sorted(order))
+                if cell == 'tv-full':
+                    for name, power in [('test_reinstall', 'false'), ('test_reinstall_wled_on', 'true')]:
+                        check = text.split(f'  {name}:', 1)[1].split('\n  test_', 1)[0]
+                        set_power = check.index(f'POST /json/state on={power}')
+                        self.assertLess(check.index('dev/install'), set_power)
+                        self.assertLess(set_power, check.index('/setup.sh'))
+                    wake = text.split('  test_standby:', 1)[1]
+                    self.assertLess(wake.index('POST /json/state on=false'), wake.index('a person wakes'))
+                else:
+                    self.assertNotIn('test_reinstall_wled_on', text)
+                    self.assertNotIn('POST /json/state on=', text)
                 for line in (
                     'wake-on-LAN magic packet for 00:00:5E:00:53:01',
                     'test_soak',

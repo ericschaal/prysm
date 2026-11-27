@@ -11,9 +11,8 @@ It comes in two packages; installing one replaces the other.
 Choose **full** if you do not want another computer. Choose **slim** if you
 already run Prysm on a computer or NAS.
 
-> **Not yet verified on hardware.** Neither package has passed acceptance
-> testing on a TV yet: install, capture, standby and wake, cold boot and
-> removal are still to be tested. Expect rough edges.
+> The full package has been tested on a rooted LG TV with WLED. Cold boot
+> and recovery from a hung capture still need hardware verification.
 
 ## Before you start
 
@@ -48,7 +47,7 @@ packaging/webos/install-ipk.sh root@TV path/to/io.github.ericschaal.prysm-full_V
 
 The helper copies the package to the TV, stops a running Prysm gracefully,
 installs the package through the TV's install service and runs the service
-setup; lighting resumes and your preferences stay. `ares-install` does not work on webOS 10
+setup. Your preferences and settings survive the update. `ares-install` does not work on webOS 10
 ("Unable to exec"); use the helper.
 
 After every install or update the service must be set up again; the helper
@@ -84,6 +83,16 @@ what else changed.
    LEDs.
 3. Play video. Under **Your lights** on the TV choose **Screen sync**, or turn
    on Screen sync in the portal.
+
+When the TV wakes or the full package restarts after an update, Prysm checks
+WLED. If the lights are off, they stay off. Press **Power** to resume the
+remembered mode. A WLED live override makes **Effects** the remembered mode
+and leaves WLED in control.
+
+With the lights on and no override, an existing stream appears as **Live
+stream detected**. Prysm leaves it alone until you choose a mode. If WLED
+is idle, Prysm resumes the remembered mode when the required devices are
+ready. If WLED hasn’t answered yet, Prysm waits.
 
 The portal stays available while the TV is awake, also with the lights off or
 the app closed. On the TV, the portal also accepts requests from pages that

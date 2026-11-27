@@ -11,8 +11,8 @@
 # IPK to /media/developer/temp/ and installs it through
 # com.webos.appInstallService/dev/install, then runs the package's setup.sh
 # (Luna registration, rescan, activation): after an install the service is
-# not running until setup runs again. The service resumes the lighting it had
-# before the update (the intent is kept per boot in /var/lib/$APP).
+# not running until setup runs again. Full checks WLED power and display at
+# startup. Slim resumes streaming if enabled.
 #
 # The install service ends a running Prysm abruptly, and a killed worker
 # was once seen to leave the TV's capture locked until a reboot (later kills

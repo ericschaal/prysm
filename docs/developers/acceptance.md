@@ -646,9 +646,12 @@ The checks, in order (`@only` marks a package's own):
   at that size, the frame rate within the tolerance, the worker's CPU and RSS
   from `/proc` every 5 s;
 - reinstall while lighting (video state): the same package again (Prysm
-  stopped first, as for every install) keeps the
-  preferences (and the full package's settings), lighting resumes by itself,
-  and the video state is confirmed again after it;
+  stopped first) keeps the preferences, and the video stays on screen. Full
+  also keeps its settings and remembers Screen sync. Between installation
+  and service setup, the full checks set WLED power and verify that it is
+  idle with no override. With power off, the portal reports Off and WLED
+  stays off. With power on, frames resume and WLED receives DDP from the TV
+  without a lighting command from the runner. Slim resumes streaming;
 - UI only (UI state, the capture with the UI): the frames within the UI size,
   the frame rate within the tolerance, the picture not black;
 - no video and no UI (the same state, the capture without the UI): for 10 s
@@ -657,9 +660,10 @@ The checks, in order (`@only` marks a package's own):
   the session not faulted), as designed; then with the UI again the frames
   return, of the UI size;
 - standby and wake (UI state; a person presses power): the TV not active, or
-  not answering, within 60 s; after the wake, active with the worker running
-  and capturing within 90 s, then the UI state again (standby ends Prysm's
-  app).
+  not answering, within 60 s. For full, the runner sets and verifies WLED off
+  before asking the person to wake the TV. The worker and portal return,
+  Screen sync stays remembered, and the lights stay off. Slim resumes
+  capture. The runner then requests Screen sync and checks UI frames again.
   Last, as it ends the other states; deselect it (`-k "not standby"`) when
   nobody is at the TV.
 

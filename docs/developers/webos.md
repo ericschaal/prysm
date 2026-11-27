@@ -4,13 +4,10 @@ Installation for users: [LG TV](../users/webos.md). Building packages:
 [packaging](packaging.md#webos). Why two packages and a supervisor:
 [decision](decisions/2026-11-12-two-tv-packages.md).
 
-> **Not yet verified on hardware.** The supervisor, both workers and setup are
-> tested on the development host and, for the TV crates, under qemu. The only
-> recorded run on a TV is the processor's benchmark
-> ([sampler speed](../../research/processing/2026-11-15-sampler-speed/README.md)).
-> No TV acceptance (install, capture, standby and wake, cold boot, hung
-> capture, removal) or on-TV smoke test is recorded for either package
-> ([records](../../research/tv-acceptance/README.md)).
+> The full package has been exercised on a rooted LG TV with WLED. See the
+> [hardware acceptance runner](acceptance.md#tv) for the lifecycle checks
+> and the [processor benchmark](../../research/processing/2026-11-15-sampler-speed/README.md)
+> for sampler measurements.
 
 > **Safety.** Work only with Prysm's own files: the app and service
 > directories, its Luna manifests, its boot hook and `/var/lib/io.github.ericschaal.prysm`.
@@ -390,7 +387,8 @@ the app ends a running Prysm abruptly, so stop it first (the Luna method
 does). Installing over a running Prysm ends it abruptly too, so
 `install-ipk.sh` and the acceptance runner first call the Luna `uninstall`,
 wait until no Prysm process is left (refusing to install while one remains),
-then install and run `setup.sh`, which re-registers and resumes the intent.
+then install and run `setup.sh`. The full worker checks WLED at startup; slim
+resumes streaming if enabled.
 Installs through Homebrew Channel or the TV's own UI cannot be hooked this
 way: an IPK carries no scripts.
 

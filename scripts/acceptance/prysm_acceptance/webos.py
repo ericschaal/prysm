@@ -217,6 +217,11 @@ class WebosTv:
         directories; only a package it accepted is staged, whatever its name.
         Raises `installed.Kept`, nothing installed, while a Prysm process still runs: the install service
         would end it abruptly."""
+        self.install_files(ipk)
+        return self.start_service()
+
+    def install_files(self, ipk: str) -> None:
+        """Replace the installed files with the old worker stopped. Setup starts the new service."""
         self._run(commands.verify_ipk(ipk))
         self._run(commands.tv_stage(self.target, ipk))
         try:
@@ -226,6 +231,8 @@ class WebosTv:
             self._run(commands.tv_unstage(self.target), check=False)
         if not result.ok:
             raise Failed('appInstallService did not report installed', (result.stdout + result.stderr)[-2000:])
+
+    def start_service(self) -> LunaReply:
         self._run(commands.tv_setup(self.target))
         state = tv.wait_state(self.get_state, lambda s: True, 30)
         if state is None:

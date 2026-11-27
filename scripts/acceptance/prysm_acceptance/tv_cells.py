@@ -53,7 +53,7 @@ from prysm_acceptance import (
     webos,
 )
 from prysm_acceptance.artifact import Artifact
-from prysm_acceptance.bench import Planner, unavailable, uninterrupted, warn_at_end
+from prysm_acceptance.bench import Planner, only, unavailable, uninterrupted, warn_at_end
 from prysm_acceptance.checks import Bench, Failed
 from prysm_acceptance.config import SSH, Config, Installed
 from prysm_acceptance.host import Host, Sender, shown
@@ -67,7 +67,6 @@ from prysm_acceptance.tv_checks import (
     Screen,
     Shown,
     capture,
-    described,
     in_state,
     receiver_seam,
 )
@@ -382,11 +381,13 @@ def _stop_plan(ssh: str) -> list[str]:
     ]
 
 
-def _install_plan(ssh: str, ipk: str) -> list[str]:
+def _install_plan(ssh: str, ipk: str, before_setup: tuple[str, ...] = ()) -> list[str]:
     return [
         *shown(commands.verify_ipk(ipk), commands.tv_stage(ssh, ipk)),
         *_stop_plan(ssh),
-        *shown(commands.tv_install(ssh), commands.tv_unstage(ssh), commands.tv_setup(ssh), commands.tv_get_state(ssh)),
+        *shown(commands.tv_install(ssh), commands.tv_unstage(ssh)),
+        *before_setup,
+        *shown(commands.tv_setup(ssh), commands.tv_get_state(ssh)),
     ]
 
 
@@ -611,33 +612,91 @@ test_pause_resume = taken(tv_checks.test_pause_resume)
 test_soak = taken(tv_checks.test_soak)
 
 
-@planned(
-    does=lambda cell, config: [
+def _reinstall_plan(cell: TvCell, config: Config, *, on: bool) -> list[str]:
+    before_setup = ()
+    expected = ['GET receiver /api/v1/state until frames resume']
+    if cell.flavour == Flavour.FULL:
+        before_setup = (tv_checks.idle_lights_plan(config, on=on),)
+        expected = [
+            'GET PORTAL/api/v1/state: saved settings and remembered Screen sync',
+            'frames and live DDP from the TV' if on else f'Off and no live stream for {tv_checks.QUIET_SECONDS} s',
+            'GET WLED /json/si to verify the physical output',
+        ]
+    return [
         *tv_checks.state_plan(_planning(config), Shown.VIDEO, config),
-        *_install_plan(_ssh(config), str(_ipk(cell, config) or 'IPK')),
-        '(getState until the worker runs, 60 s; full: GET PORTAL/api/v1/state); the video state confirmed again',
+        *_install_plan(_ssh(config), str(_ipk(cell, config) or 'IPK'), before_setup),
+        'getState until the worker runs (60 s); verify preferences and the video on screen',
+        *expected,
     ]
-)
-def test_reinstall(cell: TvCell, config: Config, screen: Screen, target: OnTv, prysm: Prysm, record: Record) -> None:
-    """Reinstall while lighting, in the video state: the same package installed again (the running Prysm
-    stopped through its Luna uninstall first) keeps the preferences (and the full package's settings), lighting
-    or the stream resumes by itself, and the TV still shows the video."""
+
+
+def _reinstall(
+    cell: TvCell, config: Config, screen: Screen, target: OnTv, prysm: Prysm, wled: Wled, *, on: bool
+) -> tuple[Prysm, dict[str, object]]:
     reached = in_state(screen, Shown.VIDEO, prysm, tv_checks.video_section(cell))
-    before = cast('LunaReply', target.tv.get_state())
+    before = target.tv.get_state()
+    if before is None:
+        raise Failed('the supervisor did not answer before reinstall')
     settings = prysm.state()['settings']
-    target.tv.install(str(_ipk(cell, config)))
+    evidence: dict[str, object] = {'state': reached, 'before': before}
+    target.tv.install_files(str(_ipk(cell, config)))
+    if cell.flavour == Flavour.FULL:
+        evidence['wled_before_setup'] = tv_checks.idle_lights(wled, on=on)
+    target.tv.start_service()
     after = tv.wait_state(target.tv.get_state, lambda s: s['worker']['phase'] == 'running', 60)
-    evidence: dict[str, object] = {'state': reached, 'before': before, 'after': after}
-    if after is None:
-        raise Failed('the worker is not running 60 s after the reinstall and setup', evidence)
-    if after['preferences'] != before['preferences']:
-        raise Failed('preferences changed by the reinstall', evidence)
-    if cell.flavour == Flavour.FULL and target.tv.wait_portal().state()['settings'] != settings:
-        raise Failed('settings.json changed by the reinstall', evidence)
-    if prysm.wait(prysm_api.running, 30) is None:
-        raise Failed('lighting did not resume after the reinstall', evidence)
+    evidence['after'] = after
+    if after is None or after['preferences'] != before['preferences']:
+        raise Failed('expected a running worker with its original preferences after reinstall', evidence)
+    if cell.flavour == Flavour.FULL:
+        prysm = target.tv.wait_portal()
+        if prysm.state()['settings'] != settings:
+            raise Failed('settings changed across reinstall', evidence)
     evidence['state_after'] = screen.confirm(Shown.VIDEO)
-    record(f'preferences (and settings) kept, lighting resumed; {described(reached)}', evidence)
+    return prysm, evidence
+
+
+@planned(does=lambda cell, config: _reinstall_plan(cell, config, on=False))
+def test_reinstall(
+    cell: TvCell, config: Config, screen: Screen, target: OnTv, prysm: Prysm, wled: Wled, record: Record
+) -> None:
+    """Reinstall during Screen sync. Full remembers Screen sync and leaves WLED off. Slim resumes streaming."""
+    portal, evidence = _reinstall(cell, config, screen, target, prysm, wled, on=False)
+    if cell.flavour == Flavour.FULL:
+        tv_checks.check_startup_off(portal, wled, evidence)
+        record('preferences retained and lights stayed off', evidence)
+    else:
+        if portal.wait(prysm_api.running, 30) is None:
+            raise Failed('the slim receiver did not resume with frames', evidence)
+        record('preferences retained and stream resumed', evidence)
+
+
+@only(Flavour.FULL)
+@planned(does=lambda cell, config: _reinstall_plan(cell, config, on=True))
+def test_reinstall_wled_on(
+    cell: TvCell,
+    config: Config,
+    screen: Screen,
+    target: OnTv,
+    prysm: Prysm,
+    wled: Wled,
+    running: Sender,
+    record: Record,
+) -> None:
+    """Full resumes remembered Screen sync when WLED is powered on and idle before startup."""
+    portal, evidence = _reinstall(cell, config, screen, target, prysm, wled, on=True)
+    state = portal.wait(prysm_api.running, 30)
+    evidence['portal_after'] = state or portal.state()
+    if (
+        state is None
+        or state['target'] != prysm_api.Target.SCREEN_SYNC
+        or state['control']['remembered'] != 'screen_sync'
+    ):
+        raise Failed('expected remembered Screen sync to resume with frames', evidence)
+    lights = host_cells.live_from_host(portal, wled, running)
+    evidence['wled_after'] = lights
+    if not lights['state']['on']:
+        raise Failed('WLED received DDP but its power is off', evidence)
+    record('Screen sync resumed automatically and WLED received live DDP from the TV', evidence)
 
 
 test_ui_only = taken(tv_checks.test_ui_only)
