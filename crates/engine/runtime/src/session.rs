@@ -1,5 +1,8 @@
 //! The session effect owner. The engine chooses each next operation; this
 //! thread keeps native handles and orders source close, output idle and join.
+mod cleanup;
+
+use self::cleanup::{CaptureCleanup, IdleDecision, SessionOutput, release_output};
 use crate::feeds::Feeds;
 use crate::session_lifecycle::OutputRelease;
 use crate::slot::LatestSlot;
@@ -8,8 +11,8 @@ use crate::worker::{Exit, Flags, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
     Claim, ConfiguredOutput, ConfiguredSource, DeviceReport, Error, FrameSource, Hangup, IdleMode,
-    LedOutput, OpenFailure, OpenIntent, OutputDisplay, OutputObservation, OutputObservationState,
-    OutputOpen, Power, Pull, Release, Result, Section, SessionPhase,
+    LedOutput, OpenIntent, OutputDisplay, OutputObservation, OutputObservationState, OutputOpen,
+    Power, Pull, Release, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -57,7 +60,7 @@ pub(crate) struct Session {
     pub(crate) claims: SessionClaims,
     control: Arc<Control>,
     open_output: Option<oneshot::Sender<OpenIntent>>,
-    idle: Option<oneshot::Sender<(OutputRelease, Option<Power>)>>,
+    idle: Option<oneshot::Sender<IdleDecision>>,
     notices: notifications::UnboundedReceiver<Notice>,
     worker: Worker<SessionEnd>,
     output_is_current: bool,
@@ -76,21 +79,26 @@ impl Session {
         claim: Claim,
         start: Start,
     ) -> Result<Self, (Error, Claim)> {
-        Self::spawn(claim, start, move |_, flags| capture.open(flags.stopping()))
+        Self::spawn(claim, start, move |stop| capture.open(stop))
     }
 
     pub(crate) fn spawn(
         claim: Claim,
         start: Start,
-        open: impl FnOnce(&Start, &Flags) -> Result<Box<dyn FrameSource>> + Send + 'static,
+        open_capture: impl FnOnce(&Hangup) -> Result<Box<dyn FrameSource>> + Send + 'static,
     ) -> Result<Self, (Error, Claim)> {
         let control = Arc::new(Control::default());
-        let (authorize, receive) = oneshot::channel();
-        let (idle, release) = oneshot::channel();
-        let (send, notices) = notifications::unbounded_channel();
+        let (open_output, authorize_output) = oneshot::channel();
+        let (idle, idle_after_capture) = oneshot::channel();
+        let (notices, events) = notifications::unbounded_channel();
+        let engine = EngineDecisions {
+            authorize_output,
+            idle_after_capture,
+            notices,
+        };
         let worker = match Worker::spawn("prysm-session", "session thread", start, {
             let control = control.clone();
-            move |start, flags| run(start, open, control, receive, release, send, flags)
+            move |start, flags| run(start, open_capture, &control, engine, flags)
         }) {
             Ok(worker) => worker,
             Err((error, _)) => return Err((error, claim)),
@@ -101,9 +109,9 @@ impl Session {
                 output: Lease::Unclaimed,
             },
             control,
-            open_output: Some(authorize),
+            open_output: Some(open_output),
             idle: Some(idle),
-            notices,
+            notices: events,
             worker,
             output_is_current: true,
         })
@@ -130,7 +138,7 @@ impl Session {
 
     pub(crate) fn idle(&mut self, mode: OutputRelease, known_power: Option<Power>) {
         if let Some(send) = self.idle.take() {
-            let _ = send.send((mode, known_power));
+            let _ = send.send(IdleDecision { mode, known_power });
         }
     }
 
@@ -164,137 +172,86 @@ impl Session {
     }
 }
 
+struct EngineDecisions {
+    authorize_output: oneshot::Receiver<OpenIntent>,
+    idle_after_capture: oneshot::Receiver<IdleDecision>,
+    notices: notifications::UnboundedSender<Notice>,
+}
+
 fn run(
     start: Start,
-    open: impl FnOnce(&Start, &Flags) -> Result<Box<dyn FrameSource>>,
-    control: Arc<Control>,
-    open_output: oneshot::Receiver<OpenIntent>,
-    idle: oneshot::Receiver<(OutputRelease, Option<Power>)>,
-    notices: notifications::UnboundedSender<Notice>,
+    open_capture: impl FnOnce(&Hangup) -> Result<Box<dyn FrameSource>>,
+    control: &Control,
+    engine: EngineDecisions,
     flags: &Flags,
 ) -> SessionEnd {
-    let mut source = None;
-    let mut output = None;
-    let mut attempted_output = false;
+    let mut capture = None;
+    let mut output = SessionOutput::default();
+    let stop = flags.stopping();
     let exit = guarded("initializing screen sync", || {
-        let opened = open(&start, flags).map_err(|error| error.in_section(Section::Capture))?;
-        source = Some(opened);
+        let source = open_capture(stop).map_err(|error| error.in_section(Section::Capture))?;
+        let source = capture.insert(source);
         start.stats.source_opened();
-        if flags.stopping().is_cut() || notices.send(Notice::CaptureOpened).is_err() {
+        if stop.is_cut() || engine.notices.send(Notice::CaptureOpened).is_err() {
             return Ok(Exit::Stopped);
         }
-        let Ok(intent) = open_output.blocking_recv() else {
+        let Ok(intent) = engine.authorize_output.blocking_recv() else {
             return Ok(Exit::Stopped);
         };
-        if flags.stopping().is_cut() {
+        if stop.is_cut() {
             return Ok(Exit::Stopped);
         }
-        match start.output.open(intent, flags.stopping()) {
-            Ok(OutputOpen::Streaming(held)) => {
-                attempted_output = true;
-                output = Some(held);
-            }
+
+        let held = match start.output.open(intent, stop) {
+            Ok(OutputOpen::Streaming(handle)) => output.hold(handle),
             Ok(OutputOpen::Handoff(observation)) => {
-                let _ = notices.send(Notice::Handoff(observation));
+                let _ = engine.notices.send(Notice::Handoff(observation));
                 return Ok(Exit::Stopped);
             }
-            Err(failed) => {
-                attempted_output = matches!(failed, OpenFailure::Touched(_));
-                return Err(failed.into_error().in_section(Section::Output));
-            }
-        }
+            Err(failure) => return Err(output.open_failed(failure)),
+        };
         start.stats.output_opened();
-        if flags.stopping().is_cut() || notices.send(Notice::OutputOpened).is_err() {
+        if stop.is_cut() || engine.notices.send(Notice::OutputOpened).is_err() {
             return Ok(Exit::Stopped);
         }
-        let mut stream = Stream::new(&start, &control, &notices);
-        Ok(
-            flags.pump(source.as_deref_mut().expect("source initialized"), |pull| {
-                stream.process(pull, &mut output, flags.stopping())
-            }),
-        )
+        let mut stream = Stream::new(&start, control, &engine.notices);
+        Ok(flags.pump(source.as_mut(), |pull| stream.process(pull, held, stop)))
     })
     .unwrap_or_else(Exit::Failed);
-    let exit = match exit {
-        Exit::Failed(error)
-            if error.cause::<HandedOff>().is_some()
-                || (flags.stopping().is_cut()
-                    && error.cause::<prysm_ports::Stopping>().is_some()) =>
-        {
-            Exit::Stopped
-        }
-        exit => exit,
-    };
-    let unconfirmed_output = match &exit {
-        Exit::Failed(error @ Error::Faulted(SessionPhase::IdlingOutput)) => Some(error.clone()),
-        _ => None,
-    };
-    let unconfirmed_open = match &exit {
-        Exit::Failed(error)
-            if source.is_none() && error.escalation() == prysm_ports::Escalation::Restart =>
-        {
-            Some(error.clone())
-        }
-        _ => None,
-    };
-    let _ = notices.send(Notice::Ended(exit));
+
+    let exit = normalize_exit(exit, stop);
+    let capture = CaptureCleanup::after_stream(capture, &exit);
+    let output = output.cleanup_after(&exit);
+    let _ = engine.notices.send(Notice::Ended(exit));
     start.feeds.clear();
     flags.set_phase(SessionPhase::ClosingSource);
-    let capture = match unconfirmed_open {
-        Some(error) => Err(error),
-        None => guarded("closing the source", || {
-            source.map_or(Ok(()), |source| source.close())
-        }),
-    };
+    let capture = capture.close();
     flags.set_phase(SessionPhase::IdlingOutput);
-    let _ = notices.send(Notice::IdleReady {
+    let _ = engine.notices.send(Notice::IdleReady {
         capture_released: capture.is_ok(),
     });
-    let (mode, known_power) = idle
+    let decision = engine
+        .idle_after_capture
         .blocking_recv()
-        .unwrap_or((OutputRelease::Preserve, None));
-    let output = guarded("idling the output", || {
-        if let Some(fault) = unconfirmed_output {
-            return Err(fault);
-        }
-        let release = match mode {
-            OutputRelease::Preserve => prysm_ports::OutputRelease::Handoff,
-            OutputRelease::Off => prysm_ports::OutputRelease::Local,
-            OutputRelease::Automatic => prysm_ports::OutputRelease::Ordinary(IdleMode::Native),
-        };
-        let stop = Hangup::default();
-        let released = output.map_or(Ok(()), |held| release_output(held, release, &stop));
-        if mode == OutputRelease::Off
-            && (attempted_output || known_power != Some(Power::Off))
-            && !matches!(released, Err(Error::Faulted(_)))
-        {
-            let off = start.output.set_power(Power::Off, &stop);
-            released.and(off)
-        } else {
-            released
-        }
-    })
-    .map_err(|error| error.in_section(Section::Output));
+        .unwrap_or(IdleDecision::PRESERVE);
+    let output = output.finish(&*start.output, &decision);
     SessionEnd {
         capture,
-        mode,
+        mode: decision.mode,
         output,
     }
 }
 
-fn release_output(
-    held: Box<dyn LedOutput>,
-    release: prysm_ports::OutputRelease,
-    stop: &Hangup,
-) -> Result<()> {
-    guarded("releasing the output", || held.release(release, stop)).map_err(|error| {
-        if matches!(error, Error::Panicked(_)) {
-            tracing::warn!(%error, "output release was not confirmed");
-            Error::Faulted(SessionPhase::IdlingOutput)
-        } else {
-            error
+fn normalize_exit(exit: Exit, stop: &Hangup) -> Exit {
+    match exit {
+        Exit::Failed(error)
+            if error.cause::<HandedOff>().is_some()
+                || (stop.is_cut() && error.cause::<prysm_ports::Stopping>().is_some()) =>
+        {
+            Exit::Stopped
         }
-    })
+        exit => exit,
+    }
 }
 
 #[derive(Debug)]
@@ -347,21 +304,22 @@ impl<'a> Stream<'a> {
     ) -> Result<()> {
         match pull {
             Pull::Frame(frame) => {
-                if output.is_none() {
-                    *output = match self
+                let held = match output {
+                    Some(handle) => handle,
+                    None => match self
                         .start
                         .output
                         .open(OpenIntent::Resume, stop)
                         .map_err(|failure| failure.into_error().in_section(Section::Output))?
                     {
-                        OutputOpen::Streaming(output) => {
+                        OutputOpen::Streaming(handle) => {
                             self.start.stats.output_opened();
-                            Some(output)
+                            output.insert(handle)
                         }
                         OutputOpen::Handoff(observation) => return self.handoff(observation),
-                    };
-                }
-                self.on_frame(frame, output.as_deref_mut().expect("output reopened"))?;
+                    },
+                };
+                self.on_frame(frame, held.as_mut())?;
             }
             quiet => {
                 let now = Instant::now();

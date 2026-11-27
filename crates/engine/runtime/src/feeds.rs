@@ -214,9 +214,13 @@ mod tests {
 
     async fn open_capture(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
         let frames = Arc::new(AtomicUsize::new(0));
+        let session = open_source(feeds, Grey(frames.clone())).await;
+        (session, frames)
+    }
+
+    async fn open_source(feeds: &Feeds, source: impl FrameSource + 'static) -> Session {
         let mut registry = Registry::default();
         registry.add_output(NullOutput);
-        let source = frames.clone();
         let mut session = Session::spawn(
             ready_claim(),
             Start {
@@ -230,11 +234,60 @@ mod tests {
                 feeds: feeds.clone(),
                 stats: Arc::new(Stats::default()),
             },
-            move |_, _| Ok(Box::new(Grey(source))),
+            move |_| Ok(Box::new(source)),
         )
         .unwrap();
         assert!(matches!(session.next().await, Notice::CaptureOpened));
-        (session, frames)
+        session
+    }
+
+    #[tokio::test]
+    async fn dropping_the_end_notice_releases_its_error_before_capture_close_finishes() {
+        use std::sync::mpsc;
+
+        struct DisconnectedSource {
+            pending: Option<mpsc::Sender<()>>,
+            released: mpsc::Receiver<()>,
+        }
+
+        impl FrameSource for DisconnectedSource {
+            fn next_frame(&mut self, _: Duration) -> Result<Pull> {
+                let unsent = self.pending.take().unwrap();
+                Err(Error::adapter(
+                    "capture disconnected",
+                    mpsc::SendError(unsent),
+                ))
+            }
+
+            fn close(self: Box<Self>) -> Result<()> {
+                match self.released.recv_timeout(Duration::from_secs(2)) {
+                    Err(mpsc::RecvTimeoutError::Disconnected) => Ok(()),
+                    _ => Err(Error::other("capture error still held during close")),
+                }
+            }
+        }
+
+        let (pending, released) = mpsc::channel();
+        let source = DisconnectedSource {
+            pending: Some(pending),
+            released,
+        };
+        let mut session = open_source(&Feeds::default(), source).await;
+        session.open_output(OpenIntent::Resume, ready_claim());
+        assert!(matches!(session.next().await, Notice::OutputOpened));
+        assert!(matches!(
+            session.next().await,
+            Notice::Ended(crate::worker::Exit::Failed(_))
+        ));
+        assert!(matches!(
+            session.next().await,
+            Notice::IdleReady {
+                capture_released: true
+            }
+        ));
+        session.idle(OutputRelease::Preserve, None);
+        assert!(matches!(session.next().await, Notice::Finished(Ok(_))));
+        session.join().await;
     }
 
     async fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
