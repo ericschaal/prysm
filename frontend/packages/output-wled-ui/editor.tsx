@@ -13,13 +13,14 @@ import {
 } from '@prysm/web-portal';
 import { normalizeWledAddress } from './address';
 import {
+  ditherDefault,
   ledEdgeLimits,
   ledEdges,
-  ledRuns,
   ledTotal,
   ledTotalLimits,
+  ledTotalProblem,
+  orderCaption,
   wiring,
-  type LedRun,
 } from './leds';
 
 const edgeLabels = {
@@ -28,20 +29,6 @@ const edgeLabels = {
   bottom: 'Bottom',
   left: 'Left',
 } as const;
-
-const describeRun = (run: LedRun) =>
-  run.first === undefined
-    ? `${run.edge}: none`
-    : `${run.edge} ${run.direction}: LEDs ${run.first}–${run.last}`;
-
-/** Where LED 1 is and the order of every edge, for screen readers. */
-function orderCaption(leds: WledSettings['leds']) {
-  const runs = ledRuns(leds);
-  const start = runs.find((run) => run.count > 0);
-  return start
-    ? `LED 1 is at the ${start.from} corner. Order: ${runs.map(describeRun).join('; ')}.`
-    : 'No LEDs yet.';
-}
 
 const typedAddress = {
   choice: 'Other lights',
@@ -59,7 +46,8 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   const legendId = useId();
   /** The found lights last picked, with the LED count they gave. */
   const [picked, setPicked] = useState<{ address: string; leds: number }>();
-  const total = ledTotal(value.leds);
+  const leds = ledEdges(value.leds);
+  const total = ledTotal(leds);
   // The address as the rows compare it: `http://wled.local:80/` is theirs.
   const address = normalizeWledAddress(value.address);
   // Said under the drawing while the address is still the picked one's;
@@ -68,9 +56,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   const over = total > ledTotalLimits.max;
   useCheck(
     'output.leds',
-    total < ledTotalLimits.min || over
-      ? `Use ${ledTotalLimits.min} to ${ledTotalLimits.max} LEDs in total.`
-      : null,
+    total < ledTotalLimits.min || over ? ledTotalProblem : null,
   );
   // One line under the drawing for all its fields: an edge's problem as it
   // is typed, else the total's (too many at once, too few once saved).
@@ -113,8 +99,8 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
           <span>Seen from the front</span>
         </legend>
         <LedDrawing
-          edges={ledEdges(value.leds)}
-          caption={orderCaption(value.leds)}
+          edges={leds}
+          caption={orderCaption(leds)}
           editing={{
             wiring,
             invalid: !!totalProblem,
@@ -145,7 +131,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
           path="output.dither"
           label="Smooth dark colours"
           help="Mixes neighbouring LED levels so dim colours fade evenly. Turn off if dark scenes twinkle."
-          checked={value.dither ?? true}
+          checked={value.dither ?? ditherDefault}
           onChange={(dither) => onChange({ ...value, dither })}
         />
       </Advanced>
@@ -158,7 +144,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
         className="led-count"
         path={`output.leds.${edge}`}
         label={`${edgeLabels[edge]} LEDs`}
-        value={value.leds[edge] ?? 0}
+        value={leds[edge]}
         onChange={(count) =>
           onChange({ ...value, leds: { ...value.leds, [edge]: count } })
         }

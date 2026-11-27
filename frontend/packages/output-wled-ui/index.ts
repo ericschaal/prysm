@@ -3,27 +3,22 @@ import type { AdapterUi } from '@prysm/web-portal';
 import { normalizeWledAddress, wledUrl } from './address';
 import { WledEditor } from './editor';
 import {
+  ditherDefault,
   ledEdgeLimits,
   ledEdges,
   ledTotal,
-  ledTotalLimits,
+  ledTotalProblem,
   wiring,
 } from './leds';
 
 export { normalizeWledAddress, wledUrl } from './address';
-export {
-  ledEdgeLimits,
-  ledRuns,
-  ledTotal,
-  ledTotalLimits,
-  wiring,
-} from './leds';
+export { ledEdgeLimits, ledTotal, ledTotalLimits, wiring } from './leds';
 
 export const wledOutput: AdapterUi<WledSettings> = {
   label: 'WLED',
   create: () => ({ kind: 'wled', address: '', leds: {} }),
   readDefaults: { leds: ledEdges({}) },
-  optional: { dither: true },
+  optional: { dither: ditherDefault },
   Editor: WledEditor,
   normalize: (value) => ({
     ...value,
@@ -46,7 +41,7 @@ export const wledOutput: AdapterUi<WledSettings> = {
   problems: {
     'output.address':
       'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.',
-    'output.leds': `Use ${ledTotalLimits.min} to ${ledTotalLimits.max} LEDs in total.`,
+    'output.leds': ledTotalProblem,
     ...Object.fromEntries(
       wiring.map(({ edge }) => [
         `output.leds.${edge}`,

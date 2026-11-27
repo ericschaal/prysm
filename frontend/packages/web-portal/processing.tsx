@@ -52,39 +52,6 @@ function applyStyle(live: ProcessingEditor, style: Style) {
     void live.commit(chooseStyle(live.value, style), 'processing.style');
 }
 
-/**
- * A light card control's header, as Brightness has: its name (`id`, which
- * names the control) and, on the right, one quiet action.
- */
-function ControlHead({
-  id,
-  label,
-  disabled,
-  onAction,
-  children,
-}: {
-  id: string;
-  label: string;
-  disabled: boolean;
-  onAction: () => void;
-  /** The action's words. */
-  children: ReactNode;
-}) {
-  return (
-    <div className="range-heading control-head">
-      <span id={id}>{label}</span>
-      <button
-        type="button"
-        className="link"
-        disabled={disabled}
-        onClick={onAction}
-      >
-        {children}
-      </button>
-    </div>
-  );
-}
-
 /** Where a row of segments can scroll to: `start end`, `end`, or nothing. */
 function markMore(track: HTMLElement) {
   const end = track.scrollWidth - track.clientWidth;
@@ -104,8 +71,11 @@ function markMore(track: HTMLElement) {
  * options are names of the person's own, each given room and cut with an
  * ellipsis when long. An option's `about` describes it to screen readers.
  */
-function Segments<T extends string>({
+function SegmentControl<T extends string>({
   labelledBy,
+  label,
+  action,
+  onAction,
   options,
   chosen,
   disabled,
@@ -113,6 +83,9 @@ function Segments<T extends string>({
   onChoose,
 }: {
   labelledBy: string;
+  label: string;
+  action: ReactNode;
+  onAction: () => void;
   options: readonly { key: T; label: string; about?: string }[];
   chosen: T | null;
   disabled: boolean;
@@ -156,7 +129,18 @@ function Segments<T extends string>({
     };
   }, [index, labels]);
   return (
-    <>
+    <div className="card-control">
+      <div className="range-heading control-head">
+        <span id={labelledBy}>{label}</span>
+        <button
+          type="button"
+          className="link"
+          disabled={disabled}
+          onClick={onAction}
+        >
+          {action}
+        </button>
+      </div>
       <div className="segments" data-names={names || undefined}>
         <div
           ref={trackRef}
@@ -201,7 +185,7 @@ function Segments<T extends string>({
           </span>
         ) : null,
       )}
-    </>
+    </div>
   );
 }
 
@@ -261,51 +245,41 @@ export function QuickPicture({
           />
         </div>
       </FieldScopeProvider>
-      <div className="card-control">
-        <ControlHead
-          id={styleId}
-          label="Style"
-          disabled={disabled}
-          onAction={adjustStyle}
-        >
-          Adjust<span className="visually-hidden"> style</span>
-        </ControlHead>
-        <Segments
-          labelledBy={styleId}
-          options={offered.map((each) => ({ key: each, ...styles[each] }))}
-          chosen={style}
-          disabled={disabled}
-          onChoose={(next) => applyStyle(live, next)}
-        />
-      </div>
-      <div className="card-control">
-        <ControlHead
-          id={calibrationsId}
-          label="Calibration"
-          disabled={disabled}
-          onAction={calibrate}
-        >
-          Calibrate colours
-        </ControlHead>
-        <Segments
-          labelledBy={calibrationsId}
-          options={[
-            ...calibrations.map(({ id, name }) => ({ key: id, label: name })),
-            { key: '', label: 'No correction' },
-          ]}
-          chosen={active ?? ''}
-          disabled={disabled}
-          names
-          onChoose={(next) => {
-            const id = next || undefined;
-            if (id !== active)
-              void live.commit(
-                withCalibrations(live.value, [...calibrations], id),
-                'processing.active_calibration',
-              );
-          }}
-        />
-      </div>
+      <SegmentControl
+        labelledBy={styleId}
+        label="Style"
+        action={
+          <>
+            Adjust<span className="visually-hidden"> style</span>
+          </>
+        }
+        onAction={adjustStyle}
+        options={offered.map((each) => ({ key: each, ...styles[each] }))}
+        chosen={style}
+        disabled={disabled}
+        onChoose={(next) => applyStyle(live, next)}
+      />
+      <SegmentControl
+        labelledBy={calibrationsId}
+        label="Calibration"
+        action="Calibrate colours"
+        onAction={calibrate}
+        options={[
+          ...calibrations.map(({ id, name }) => ({ key: id, label: name })),
+          { key: '', label: 'No correction' },
+        ]}
+        chosen={active ?? ''}
+        disabled={disabled}
+        names
+        onChoose={(next) => {
+          const id = next || undefined;
+          if (id !== active)
+            void live.commit(
+              withCalibrations(live.value, [...calibrations], id),
+              'processing.active_calibration',
+            );
+        }}
+      />
       <Problem failure={live.failure} retry={live.retry} />
     </section>
   );

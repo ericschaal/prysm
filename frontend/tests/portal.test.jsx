@@ -33,7 +33,6 @@ import {
 } from '@prysm/web-portal';
 import {
   ledEdgeLimits,
-  ledRuns,
   normalizeWledAddress,
   wledUrl,
 } from '@prysm/output-wled-ui';
@@ -2109,11 +2108,18 @@ test('each edge’s LED count is typed on that edge of the drawing', async () =>
 });
 
 test('the drawing badges LED 1 and says once where it is and which way the strip runs', async () => {
-  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture,
+    output: { ...output, leds: { top: 3, right: 2, bottom: 3, left: 2 } },
+  });
   const way = () => $('.led-way').lastChild.textContent;
   const start = () => $('.led-start');
   try {
     await openEditor('Lights');
+    assert.equal(
+      $('.led-layout figcaption').textContent,
+      'LED 1 is at the bottom-left corner. Order: left upward: LEDs 1–2; top rightward: LEDs 3–5; right downward: LEDs 6–7; bottom leftward: LEDs 8–10.',
+    );
     // The first lit edge decides: left, else top, else right, else bottom.
     for (const [edges, corner, along] of [
       [{}, 'bottom-left', 'up'],
@@ -2138,20 +2144,6 @@ test('the drawing badges LED 1 and says once where it is and which way the strip
   } finally {
     await portal.unmount();
   }
-});
-
-test('LED runs follow render_edges: bottom-left, clockwise, empty edges skipped', () => {
-  assert.deepEqual(
-    ledRuns({ top: 3, right: 2, bottom: 3, left: 2 }).map(
-      ({ edge, first, last, from }) => [edge, first, last, from],
-    ),
-    [
-      ['left', 1, 2, 'bottom-left'],
-      ['top', 3, 5, 'top-left'],
-      ['right', 6, 7, 'top-right'],
-      ['bottom', 8, 10, 'bottom-right'],
-    ],
-  );
 });
 
 test('fields the forms do not show are preserved on every save', async () => {
