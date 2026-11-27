@@ -323,6 +323,34 @@ fn rescan_failures_and_hangs_are_errors() {
 }
 
 #[test]
+fn exit_wait_ignores_a_stopped_child() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "kill -STOP $$"])
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let (report, reported) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = report.send(await_exit(pid));
+    });
+
+    let before_kill = reported.recv_timeout(Duration::from_millis(200));
+    let killed = child.kill();
+    let after_kill = reported.recv_timeout(Duration::from_secs(3));
+    let status = child.wait().unwrap();
+
+    killed.unwrap();
+    assert!(
+        matches!(before_kill, Err(mpsc::RecvTimeoutError::Timeout)),
+        "{before_kill:?}"
+    );
+    assert!(matches!(after_kill, Ok(Ok(()))), "{after_kill:?}");
+    assert_eq!(status.signal(), Some(nix::libc::SIGKILL));
+}
+
+#[test]
 fn activation_asks_for_state_and_checks_the_reply() {
     let mut s = sandbox();
     s.installer.activate("app.test.service").unwrap();
